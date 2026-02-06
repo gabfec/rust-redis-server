@@ -12,7 +12,7 @@ fn main() {
         match stream {
             Ok(stream) => {
                 println!("accepted new connection");
-                handle_connection(stream).unwrap();
+                std::thread::spawn(|| handle_connection(stream).unwrap());
             }
             Err(e) => {
                 println!("error: {}", e);
