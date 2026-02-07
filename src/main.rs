@@ -4,6 +4,7 @@ use std::net::{TcpListener, TcpStream};
 
 enum Command {
     Ping,
+    Echo(String),
 }
 
 fn main() {
@@ -40,7 +41,11 @@ fn handle_connection(mut stream: TcpStream) -> IoResult<()> {
                 Command::Ping => {
                     stream.write_all(b"+PONG\r\n")?;
                 }
-                // Add more commands here
+                Command::Echo(content) => {
+                    // RESP Bulk String format: "$length\r\ncontent\r\n"
+                    let response = format!("${}\r\n{}\r\n", content.len(), content);
+                    stream.write_all(response.as_bytes())?;
+                }
             }
         }
     }
@@ -61,6 +66,11 @@ fn parse_message(input: &str) -> Option<Command> {
 
     match command_name.as_str() {
         "PING" => Some(Command::Ping),
+        "ECHO" => {
+            // The value for ECHO is at index 4
+            let content = lines.get(4)?;
+            Some(Command::Echo(content.to_string()))
+        }
         _ => None,
     }
 }
