@@ -3,14 +3,27 @@ use std::collections::HashMap;
 use std::io::{Read, Result as IoResult, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-type Db = Arc<Mutex<HashMap<String, String>>>;
+#[derive(Debug)]
+struct Entry {
+    value: String,
+    created_at: Instant,
+    expires_in: Option<Duration>,
+}
 
+type Db = Arc<Mutex<HashMap<String, Entry>>>;
+
+#[derive(Debug)]
 enum Command {
     Ping,
     Echo(String),
-    Set(String, String), // Key, Value
-    Get(String),         // Key
+    Set {
+        key: String,
+        value: String,
+        px: Option<u64>, // Expiry in milliseconds
+    },
+    Get(String), // Key
 }
 
 fn main() {
@@ -45,6 +58,8 @@ fn handle_connection(mut stream: TcpStream, db: Db) -> IoResult<()> {
         let input = String::from_utf8_lossy(&buffer[..bytes_read]);
 
         if let Some(command) = parse_message(&input) {
+            println!("Received command: {:?}", command);
+
             match command {
                 Command::Ping => {
                     stream.write_all(b"+PONG\r\n")?;
@@ -54,15 +69,38 @@ fn handle_connection(mut stream: TcpStream, db: Db) -> IoResult<()> {
                     let response = format!("${}\r\n{}\r\n", content.len(), content);
                     stream.write_all(response.as_bytes())?;
                 }
-                Command::Set(key, value) => {
-                    let mut map = db.lock().unwrap(); // Lock the mutex
-                    map.insert(key, value);
+                Command::Set { key, value, px } => {
+                    let mut db_lock = db.lock().unwrap();
+
+                    db_lock.insert(
+                        key,
+                        Entry {
+                            value,
+                            created_at: Instant::now(),
+                            expires_in: px.map(Duration::from_millis),
+                        },
+                    );
                     stream.write_all(b"+OK\r\n")?;
                 }
                 Command::Get(key) => {
-                    let map = db.lock().unwrap();
-                    match map.get(&key) {
-                        Some(value) => {
+                    let mut db_lock = db.lock().unwrap();
+
+                    let is_expired = if let Some(entry) = db_lock.get(&key) {
+                        if let Some(duration) = entry.expires_in {
+                            entry.created_at.elapsed() > duration
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+
+                    if is_expired {
+                        db_lock.remove(&key);
+                    }
+
+                    match db_lock.get(&key) {
+                        Some(Entry { value, .. }) => {
                             let response = format!("${}\r\n{}\r\n", value.len(), value);
                             stream.write_all(response.as_bytes())?;
                         }
@@ -100,7 +138,16 @@ fn parse_message(input: &str) -> Option<Command> {
         "SET" => {
             let key = lines.get(4)?.to_string();
             let value = lines.get(6)?.to_string();
-            Some(Command::Set(key, value))
+            let mut px = None;
+
+            if let Some(pos) = lines.iter().position(|&p| p.to_uppercase() == "PX") {
+                // Skip the next line ($3) and get the one after (number)
+                if let Some(ms_str) = lines.get(pos + 2) {
+                    px = ms_str.parse::<u64>().ok();
+                }
+            }
+
+            Some(Command::Set { key, value, px })
         }
         "GET" => {
             let key = lines.get(4)?.to_string();
