@@ -6,8 +6,14 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 #[derive(Debug)]
+enum RedisValue {
+    String(String),
+    List(Vec<String>),
+}
+
+#[derive(Debug)]
 struct Entry {
-    value: String,
+    value: RedisValue,
     created_at: Instant,
     expires_in: Option<Duration>,
 }
@@ -24,6 +30,10 @@ enum Command {
         px: Option<u64>, // Expiry in milliseconds
     },
     Get(String), // Key
+    Rpush {
+        key: String,
+        values: Vec<String>,
+    },
 }
 
 fn main() {
@@ -75,7 +85,7 @@ fn handle_connection(mut stream: TcpStream, db: Db) -> IoResult<()> {
                     db_lock.insert(
                         key,
                         Entry {
-                            value,
+                            value: RedisValue::String(value),
                             created_at: Instant::now(),
                             expires_in: px.map(Duration::from_millis),
                         },
@@ -100,14 +110,46 @@ fn handle_connection(mut stream: TcpStream, db: Db) -> IoResult<()> {
                     }
 
                     match db_lock.get(&key) {
-                        Some(Entry { value, .. }) => {
-                            let response = format!("${}\r\n{}\r\n", value.len(), value);
-                            stream.write_all(response.as_bytes())?;
+                        Some(entry) => {
+                            // We must match on the type of value stored
+                            match &entry.value {
+                                RedisValue::String(s) => {
+                                    let response = format!("${}\r\n{}\r\n", s.len(), s);
+                                    stream.write_all(response.as_bytes())?;
+                                }
+                                RedisValue::List(_) => {
+                                    // Redis returns a specific error when calling GET on a List
+                                    stream.write_all(b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n")?;
+                                }
+                            }
                         }
                         None => {
                             // RESP Null Bulk String (-1)
                             stream.write_all(b"$-1\r\n")?;
                         }
+                    }
+                }
+                Command::Rpush { key, values } => {
+                    let mut map = db.lock().unwrap();
+
+                    let entry = map.entry(key).or_insert(Entry {
+                        value: RedisValue::List(Vec::new()),
+                        created_at: Instant::now(),
+                        expires_in: None,
+                    });
+
+                    if let RedisValue::List(ref mut list) = entry.value {
+                        for val in values {
+                            list.push(val);
+                        }
+                        let length = list.len();
+                        // RESP Integer format: ":<number>\r\n"
+                        let response = format!(":{}\r\n", length);
+                        stream.write_all(response.as_bytes())?;
+                    } else {
+                        // Technically Redis returns an error if you RPUSH to a key
+                        // that already holds a String, but for now, we can just return an error.
+                        stream.write_all(b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n")?;
                     }
                 }
             }
@@ -152,6 +194,15 @@ fn parse_message(input: &str) -> Option<Command> {
         "GET" => {
             let key = lines.get(4)?.to_string();
             Some(Command::Get(key))
+        }
+        "RPUSH" => {
+            let key = lines.get(4)?.to_string();
+            // For now, we just grab the first value at index 6
+            let mut values = Vec::new();
+            if let Some(val) = lines.get(6) {
+                values.push(val.to_string());
+            }
+            Some(Command::Rpush { key, values })
         }
         _ => None,
     }
