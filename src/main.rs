@@ -199,8 +199,11 @@ fn parse_message(input: &str) -> Option<Command> {
             let key = lines.get(4)?.to_string();
             // For now, we just grab the first value at index 6
             let mut values = Vec::new();
-            if let Some(val) = lines.get(6) {
+            // Starting from index 6, every 2nd line is a new value (skip the $ metadata)
+            let mut i = 6;
+            while let Some(val) = lines.get(i) {
                 values.push(val.to_string());
+                i += 2;
             }
             Some(Command::Rpush { key, values })
         }
