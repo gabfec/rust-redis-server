@@ -34,6 +34,11 @@ enum Command {
         key: String,
         values: Vec<String>,
     },
+    Lrange {
+        key: String,
+        start: usize,
+        stop: usize,
+    },
 }
 
 fn main() {
@@ -152,6 +157,40 @@ fn handle_connection(mut stream: TcpStream, db: Db) -> IoResult<()> {
                         stream.write_all(b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n")?;
                     }
                 }
+                Command::Lrange { key, start, stop } => {
+                    let db_lock = db.lock().unwrap();
+
+                    match db_lock.get(&key) {
+                        Some(entry) => {
+                            if let RedisValue::List(ref list) = entry.value {
+                                // If start >= length, return empty
+                                if start >= list.len() || start > stop {
+                                    stream.write_all(b"*0\r\n")?;
+                                } else {
+                                    // If stop >= length, treat as last element
+                                    let actual_stop = std::cmp::min(stop, list.len() - 1);
+
+                                    // The slice range is [start..actual_stop + 1] because Rust ranges are exclusive
+                                    let elements = &list[start..=actual_stop];
+
+                                    // Encode as RESP Array: *<count>\r\n
+                                    let mut response = format!("*{}\r\n", elements.len());
+                                    for el in elements {
+                                        response.push_str(&format!("${}\r\n{}\r\n", el.len(), el));
+                                    }
+                                    stream.write_all(response.as_bytes())?;
+                                }
+                            } else {
+                                // If the key is a String, Redis returns an error
+                                stream.write_all(b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n")?;
+                            }
+                        }
+                        None => {
+                            // If list doesn't exist, return empty array
+                            stream.write_all(b"*0\r\n")?;
+                        }
+                    }
+                }
             }
         }
     }
@@ -206,6 +245,12 @@ fn parse_message(input: &str) -> Option<Command> {
                 i += 2;
             }
             Some(Command::Rpush { key, values })
+        }
+        "LRANGE" => {
+            let key = lines.get(4)?.to_string();
+            let start = lines.get(6)?.parse::<usize>().ok()?;
+            let stop = lines.get(8)?.parse::<usize>().ok()?;
+            Some(Command::Lrange { key, start, stop })
         }
         _ => None,
     }
