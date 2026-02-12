@@ -36,8 +36,8 @@ enum Command {
     },
     Lrange {
         key: String,
-        start: usize,
-        stop: usize,
+        start: i64,
+        stop: i64,
     },
 }
 
@@ -163,15 +163,20 @@ fn handle_connection(mut stream: TcpStream, db: Db) -> IoResult<()> {
                     match db_lock.get(&key) {
                         Some(entry) => {
                             if let RedisValue::List(ref list) = entry.value {
-                                // If start >= length, return empty
-                                if start >= list.len() || start > stop {
+                                let len = list.len() as i64;
+
+                                // Normalize and clamp in one step per variable
+                                let start_idx = (if start < 0 { len + start } else { start })
+                                    .clamp(0, len)
+                                    as usize;
+                                let stop_idx = (if stop < 0 { len + stop } else { stop })
+                                    .clamp(0, len - 1)
+                                    as usize;
+
+                                if start_idx >= list.len() || start_idx > stop_idx {
                                     stream.write_all(b"*0\r\n")?;
                                 } else {
-                                    // If stop >= length, treat as last element
-                                    let actual_stop = std::cmp::min(stop, list.len() - 1);
-
-                                    // The slice range is [start..actual_stop + 1] because Rust ranges are exclusive
-                                    let elements = &list[start..=actual_stop];
+                                    let elements = &list[start_idx..=stop_idx];
 
                                     // Encode as RESP Array: *<count>\r\n
                                     let mut response = format!("*{}\r\n", elements.len());
@@ -248,8 +253,8 @@ fn parse_message(input: &str) -> Option<Command> {
         }
         "LRANGE" => {
             let key = lines.get(4)?.to_string();
-            let start = lines.get(6)?.parse::<usize>().ok()?;
-            let stop = lines.get(8)?.parse::<usize>().ok()?;
+            let start = lines.get(6)?.parse::<i64>().ok()?;
+            let stop = lines.get(8)?.parse::<i64>().ok()?;
             Some(Command::Lrange { key, start, stop })
         }
         _ => None,
