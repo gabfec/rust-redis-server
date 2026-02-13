@@ -34,6 +34,10 @@ enum Command {
         key: String,
         values: Vec<String>,
     },
+    Lpush {
+        key: String,
+        values: Vec<String>,
+    },
     Lrange {
         key: String,
         start: i64,
@@ -157,6 +161,27 @@ fn handle_connection(mut stream: TcpStream, db: Db) -> IoResult<()> {
                         stream.write_all(b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n")?;
                     }
                 }
+                Command::Lpush { key, values } => {
+                    let mut map = db.lock().unwrap();
+
+                    let entry = map.entry(key).or_insert(Entry {
+                        value: RedisValue::List(Vec::new()),
+                        created_at: Instant::now(),
+                        expires_in: None,
+                    });
+
+                    if let RedisValue::List(ref mut list) = entry.value {
+                        for val in values {
+                            list.insert(0, val);
+                        }
+                        let length = list.len();
+                        // RESP Integer format: ":<number>\r\n"
+                        let response = format!(":{}\r\n", length);
+                        stream.write_all(response.as_bytes())?;
+                    } else {
+                        stream.write_all(b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n")?;
+                    }
+                }
                 Command::Lrange { key, start, stop } => {
                     let db_lock = db.lock().unwrap();
 
@@ -241,7 +266,6 @@ fn parse_message(input: &str) -> Option<Command> {
         }
         "RPUSH" => {
             let key = lines.get(4)?.to_string();
-            // For now, we just grab the first value at index 6
             let mut values = Vec::new();
             // Starting from index 6, every 2nd line is a new value (skip the $ metadata)
             let mut i = 6;
@@ -250,6 +274,17 @@ fn parse_message(input: &str) -> Option<Command> {
                 i += 2;
             }
             Some(Command::Rpush { key, values })
+        }
+        "LPUSH" => {
+            let key = lines.get(4)?.to_string();
+            let mut values = Vec::new();
+            // Starting from index 6, every 2nd line is a new value (skip the $ metadata)
+            let mut i = 6;
+            while let Some(val) = lines.get(i) {
+                values.push(val.to_string());
+                i += 2;
+            }
+            Some(Command::Lpush { key, values })
         }
         "LRANGE" => {
             let key = lines.get(4)?.to_string();
