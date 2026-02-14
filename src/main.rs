@@ -44,6 +44,7 @@ enum Command {
         stop: i64,
     },
     Llen(String),
+    Lpop(String),
 }
 
 fn main() {
@@ -240,6 +241,30 @@ fn handle_connection(mut stream: TcpStream, db: Db) -> IoResult<()> {
                         }
                     }
                 }
+                Command::Lpop(key) => {
+                    let mut db_lock = db.lock().unwrap();
+
+                    match db_lock.get_mut(&key) {
+                        Some(entry) => {
+                            if let RedisValue::List(ref mut list) = entry.value {
+                                if list.is_empty() {
+                                    // List exists but is empty
+                                    stream.write_all(b"$-1\r\n")?;
+                                } else {
+                                    // Remove the first element
+                                    let val = list.remove(0);
+                                    let response = format!("${}\r\n{}\r\n", val.len(), val);
+                                    stream.write_all(response.as_bytes())?;
+                                }
+                            } else {
+                                stream.write_all(b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n")?;
+                            }
+                        }
+                        None => {
+                            stream.write_all(b"$-1\r\n")?;
+                        }
+                    }
+                }
             }
         }
     }
@@ -314,6 +339,10 @@ fn parse_message(input: &str) -> Option<Command> {
         "LLEN" => {
             let key = lines.get(4)?.to_string();
             Some(Command::Llen(key))
+        }
+        "LPOP" => {
+            let key = lines.get(4)?.to_string();
+            Some(Command::Lpop(key))
         }
         _ => None,
     }
