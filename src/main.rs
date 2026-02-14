@@ -2,7 +2,7 @@
 use std::collections::HashMap;
 use std::io::{Read, Result as IoResult, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 #[derive(Debug)]
@@ -19,6 +19,7 @@ struct Entry {
 }
 
 type Db = Arc<Mutex<HashMap<String, Entry>>>;
+type Cv = Arc<Condvar>;
 
 #[derive(Debug)]
 enum Command {
@@ -48,6 +49,10 @@ enum Command {
         key: String,
         count: Option<usize>,
     },
+    Blpop {
+        keys: Vec<String>,
+        timeout: f64,
+    },
 }
 
 fn main() {
@@ -56,13 +61,15 @@ fn main() {
 
     let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
     let db: Db = Arc::new(Mutex::new(HashMap::new()));
+    let cv = Arc::new(Condvar::new());
 
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
                 println!("accepted new connection");
                 let db_clone = Arc::clone(&db);
-                std::thread::spawn(|| handle_connection(stream, db_clone).unwrap());
+                let cv_clone = Arc::clone(&cv);
+                std::thread::spawn(|| handle_connection(stream, db_clone, cv_clone).unwrap());
             }
             Err(e) => {
                 println!("error: {}", e);
@@ -71,7 +78,7 @@ fn main() {
     }
 }
 
-fn handle_connection(mut stream: TcpStream, db: Db) -> IoResult<()> {
+fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
     let mut buffer = [0; 1024];
     loop {
         let bytes_read = stream.read(&mut buffer)?;
@@ -160,6 +167,8 @@ fn handle_connection(mut stream: TcpStream, db: Db) -> IoResult<()> {
                         // RESP Integer format: ":<number>\r\n"
                         let response = format!(":{}\r\n", length);
                         stream.write_all(response.as_bytes())?;
+
+                        cv.notify_all(); // Wake up any BLPOP waiters
                     } else {
                         // Technically Redis returns an error if you RPUSH to a key
                         // that already holds a String, but for now, we can just return an error.
@@ -183,6 +192,8 @@ fn handle_connection(mut stream: TcpStream, db: Db) -> IoResult<()> {
                         // RESP Integer format: ":<number>\r\n"
                         let response = format!(":{}\r\n", length);
                         stream.write_all(response.as_bytes())?;
+
+                        cv.notify_all(); // Wake up any BLPOP waiters
                     } else {
                         stream.write_all(b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n")?;
                     }
@@ -295,6 +306,53 @@ fn handle_connection(mut stream: TcpStream, db: Db) -> IoResult<()> {
                         }
                     }
                 }
+                Command::Blpop { keys, timeout } => {
+                    let mut map = db.lock().unwrap();
+
+                    let timeout_duration = std::time::Duration::from_secs_f64(timeout);
+                    let start_time = std::time::Instant::now();
+
+                    loop {
+                        // 1. Try to find a non-empty list
+                        for key in &keys {
+                            if let Some(Entry {
+                                value: RedisValue::List(list),
+                                ..
+                            }) = map.get_mut(key)
+                            {
+                                if !list.is_empty() {
+                                    let val = list.remove(0);
+                                    // BLPOP returns a 2-element array: [key, value]
+                                    let response = format!(
+                                        "*2\r\n${}\r\n{}\r\n${}\r\n{}\r\n",
+                                        key.len(),
+                                        key,
+                                        val.len(),
+                                        val
+                                    );
+                                    stream.write_all(response.as_bytes())?;
+                                    return Ok(());
+                                }
+                            }
+                        }
+
+                        // 2. Check if we already timed out
+                        let elapsed = start_time.elapsed();
+                        if timeout > 0.0 && elapsed >= timeout_duration {
+                            stream.write_all(b"$-1\r\n")?; // Redis returns Null Bulk String on timeout
+                            return Ok(());
+                        }
+
+                        // 3. Wait to be notified or for timeout
+                        if timeout == 0.0 {
+                            map = cv.wait(map).unwrap();
+                        } else {
+                            let remaining = timeout_duration - elapsed;
+                            let (new_map, _) = cv.wait_timeout(map, remaining).unwrap();
+                            map = new_map;
+                        }
+                    }
+                }
             }
         }
     }
@@ -374,6 +432,27 @@ fn parse_message(input: &str) -> Option<Command> {
             let key = lines.get(4)?.to_string();
             let count = lines.get(6).and_then(|s| s.parse::<usize>().ok());
             Some(Command::Lpop { key, count })
+        }
+        "BLPOP" => {
+            let mut keys = Vec::new();
+            let mut i = 4;
+
+            // Filter out empty lines caused by the split at the end
+            let filtered_lines: Vec<&str> =
+                lines.iter().filter(|s| !s.is_empty()).cloned().collect();
+
+            // The timeout is the very last valid element
+            let timeout_str = filtered_lines.last()?;
+            let timeout = timeout_str.parse::<f64>().ok()?;
+
+            // Keys are between index 4 and the last element
+            // In filtered_lines, indices are 0: *N, 1: $len, 2: BLPOP, 3: $len, 4: key1...
+            while i < filtered_lines.len() - 1 {
+                keys.push(filtered_lines.get(i)?.to_string());
+                i += 2;
+            }
+
+            Some(Command::Blpop { keys, timeout })
         }
         _ => None,
     }
