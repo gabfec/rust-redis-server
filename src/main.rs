@@ -44,7 +44,10 @@ enum Command {
         stop: i64,
     },
     Llen(String),
-    Lpop(String),
+    Lpop {
+        key: String,
+        count: Option<usize>,
+    },
 }
 
 fn main() {
@@ -241,20 +244,47 @@ fn handle_connection(mut stream: TcpStream, db: Db) -> IoResult<()> {
                         }
                     }
                 }
-                Command::Lpop(key) => {
+                Command::Lpop { key, count } => {
                     let mut db_lock = db.lock().unwrap();
 
                     match db_lock.get_mut(&key) {
                         Some(entry) => {
                             if let RedisValue::List(ref mut list) = entry.value {
-                                if list.is_empty() {
-                                    // List exists but is empty
-                                    stream.write_all(b"$-1\r\n")?;
-                                } else {
-                                    // Remove the first element
-                                    let val = list.remove(0);
-                                    let response = format!("${}\r\n{}\r\n", val.len(), val);
-                                    stream.write_all(response.as_bytes())?;
+                                match count {
+                                    None => {
+                                        // LPOP without count
+                                        if list.is_empty() {
+                                            // List exists but is empty
+                                            stream.write_all(b"$-1\r\n")?;
+                                        } else {
+                                            // Remove the first element
+                                            let val = list.remove(0);
+                                            let response = format!("${}\r\n{}\r\n", val.len(), val);
+                                            stream.write_all(response.as_bytes())?;
+                                        }
+                                    }
+                                    Some(num) => {
+                                        // LPOP with count
+                                        let take_count = std::cmp::min(num, list.len());
+                                        if take_count == 0 {
+                                            stream.write_all(b"*-1\r\n")?; // Or *0\r\n depending on Redis version
+                                        } else {
+                                            // Remove the first 'n' elements from the vector
+                                            let popped_elements: Vec<String> =
+                                                list.drain(0..take_count).collect();
+
+                                            let mut response =
+                                                format!("*{}\r\n", popped_elements.len());
+                                            for el in popped_elements {
+                                                response.push_str(&format!(
+                                                    "${}\r\n{}\r\n",
+                                                    el.len(),
+                                                    el
+                                                ));
+                                            }
+                                            stream.write_all(response.as_bytes())?;
+                                        }
+                                    }
                                 }
                             } else {
                                 stream.write_all(b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n")?;
@@ -342,7 +372,8 @@ fn parse_message(input: &str) -> Option<Command> {
         }
         "LPOP" => {
             let key = lines.get(4)?.to_string();
-            Some(Command::Lpop(key))
+            let count = lines.get(6).and_then(|s| s.parse::<usize>().ok());
+            Some(Command::Lpop { key, count })
         }
         _ => None,
     }
