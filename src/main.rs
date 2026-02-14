@@ -43,6 +43,7 @@ enum Command {
         start: i64,
         stop: i64,
     },
+    Llen(String),
 }
 
 fn main() {
@@ -221,6 +222,24 @@ fn handle_connection(mut stream: TcpStream, db: Db) -> IoResult<()> {
                         }
                     }
                 }
+                Command::Llen(key) => {
+                    let db_lock = db.lock().unwrap();
+
+                    match db_lock.get(&key) {
+                        Some(entry) => {
+                            if let RedisValue::List(ref list) = entry.value {
+                                let response = format!(":{}\r\n", list.len());
+                                stream.write_all(response.as_bytes())?;
+                            } else {
+                                stream.write_all(b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n")?;
+                            }
+                        }
+                        None => {
+                            // Redis returns 0 for non-existent keys
+                            stream.write_all(b":0\r\n")?;
+                        }
+                    }
+                }
             }
         }
     }
@@ -291,6 +310,10 @@ fn parse_message(input: &str) -> Option<Command> {
             let start = lines.get(6)?.parse::<i64>().ok()?;
             let stop = lines.get(8)?.parse::<i64>().ok()?;
             Some(Command::Lrange { key, start, stop })
+        }
+        "LLEN" => {
+            let key = lines.get(4)?.to_string();
+            Some(Command::Llen(key))
         }
         _ => None,
     }
