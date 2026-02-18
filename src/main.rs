@@ -309,8 +309,8 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                 Command::Blpop { keys, timeout } => {
                     let mut map = db.lock().unwrap();
 
-                    let timeout_duration = std::time::Duration::from_secs_f64(timeout);
-                    let start_time = std::time::Instant::now();
+                    let timeout_duration = Duration::from_secs_f64(timeout);
+                    let start_time = Instant::now();
 
                     loop {
                         // 1. Try to find a non-empty list
@@ -339,7 +339,7 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                         // 2. Check if we already timed out
                         let elapsed = start_time.elapsed();
                         if timeout > 0.0 && elapsed >= timeout_duration {
-                            stream.write_all(b"$-1\r\n")?; // Redis returns Null Bulk String on timeout
+                            stream.write_all(b"*-1\r\n")?; // Redis returns Null Bulk String on timeout
                             return Ok(());
                         }
 
