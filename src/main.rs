@@ -282,7 +282,7 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                         }
                         None => {
                             // Redis returns 0 for non-existent keys
-                            stream.write_resp(b":0\r\n")?;
+                            stream.write_resp(Resp::integer(0))?;
                         }
                     }
                 }
