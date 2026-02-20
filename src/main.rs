@@ -53,6 +53,7 @@ enum Command {
         keys: Vec<String>,
         timeout: f64,
     },
+    Type(String),
 }
 
 struct Resp;
@@ -88,6 +89,15 @@ trait RedisWrite {
 impl RedisWrite for TcpStream {
     fn write_resp(&mut self, resp: impl AsRef<[u8]>) -> IoResult<()> {
         self.write_all(resp.as_ref())
+    }
+}
+
+impl RedisValue {
+    fn type_name(&self) -> &'static str {
+        match self {
+            RedisValue::String(_) => "string",
+            RedisValue::List(_) => "list",
+        }
     }
 }
 
@@ -371,6 +381,28 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                         }
                     }
                 }
+                Command::Type(key) => {
+                    let mut map = db.lock().unwrap();
+
+                    // Check if the key exists and isn't expired
+                    let entry_type = if let Some(entry) = map.get(&key) {
+                        // Handle expiration
+                        if let Some(duration) = entry.expires_in {
+                            if entry.created_at.elapsed() > duration {
+                                map.remove(&key);
+                                "none"
+                            } else {
+                                entry.value.type_name()
+                            }
+                        } else {
+                            entry.value.type_name()
+                        }
+                    } else {
+                        "none"
+                    };
+
+                    stream.write_resp(Resp::string(entry_type))?;
+                }
             }
         }
     }
@@ -471,6 +503,10 @@ fn parse_message(input: &str) -> Option<Command> {
             }
 
             Some(Command::Blpop { keys, timeout })
+        }
+        "TYPE" => {
+            let key = lines.get(4)?.to_string();
+            Some(Command::Type(key))
         }
         _ => None,
     }
