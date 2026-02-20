@@ -81,6 +81,16 @@ impl Resp {
     }
 }
 
+trait RedisWrite {
+    fn write_resp(&mut self, resp: impl AsRef<[u8]>) -> IoResult<()>;
+}
+
+impl RedisWrite for TcpStream {
+    fn write_resp(&mut self, resp: impl AsRef<[u8]>) -> IoResult<()> {
+        self.write_all(resp.as_ref())
+    }
+}
+
 fn main() {
     // You can use print statements as follows for debugging, they'll be visible when running tests.
     println!("Logs from your program will appear here!");
@@ -119,10 +129,10 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
 
             match command {
                 Command::Ping => {
-                    stream.write_all(Resp::string("PONG").as_bytes())?;
+                    stream.write_resp(Resp::string("PONG"))?;
                 }
                 Command::Echo(content) => {
-                    stream.write_all(Resp::bulk_string(&content).as_bytes())?;
+                    stream.write_resp(Resp::bulk_string(&content))?;
                 }
                 Command::Set { key, value, px } => {
                     let mut db_lock = db.lock().unwrap();
@@ -135,7 +145,7 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                             expires_in: px.map(Duration::from_millis),
                         },
                     );
-                    stream.write_all(Resp::string("OK").as_bytes())?;
+                    stream.write_resp(Resp::string("OK"))?;
                 }
                 Command::Get(key) => {
                     let mut db_lock = db.lock().unwrap();
@@ -159,17 +169,17 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                             // We must match on the type of value stored
                             match &entry.value {
                                 RedisValue::String(s) => {
-                                    stream.write_all(Resp::bulk_string(&s).as_bytes())?;
+                                    stream.write_resp(Resp::bulk_string(&s))?;
                                 }
                                 RedisValue::List(_) => {
                                     // Redis returns a specific error when calling GET on a List
-                                    stream.write_all(Resp::error("WRONGTYPE Operation against a key holding the wrong kind of value").as_bytes())?;
+                                    stream.write_resp(Resp::error("WRONGTYPE Operation against a key holding the wrong kind of value"))?;
                                 }
                             }
                         }
                         None => {
                             // RESP Null Bulk String (-1)
-                            stream.write_all(Resp::null_bulk().as_bytes())?;
+                            stream.write_resp(Resp::null_bulk())?;
                         }
                     }
                 }
@@ -187,18 +197,15 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                             list.push(val);
                         }
                         // RESP Integer format: ":<number>\r\n"
-                        stream.write_all(Resp::integer(list.len()).as_bytes())?;
+                        stream.write_resp(Resp::integer(list.len()))?;
 
                         cv.notify_all(); // Wake up any BLPOP waiters
                     } else {
                         // Technically Redis returns an error if you RPUSH to a key
                         // that already holds a String, but for now, we can just return an error.
-                        stream.write_all(
-                            Resp::error(
-                                "WRONGTYPE Operation against a key holding the wrong kind of value",
-                            )
-                            .as_bytes(),
-                        )?;
+                        stream.write_resp(Resp::error(
+                            "WRONGTYPE Operation against a key holding the wrong kind of value",
+                        ))?;
                     }
                 }
                 Command::Lpush { key, values } => {
@@ -214,16 +221,13 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                         for val in values {
                             list.insert(0, val);
                         }
-                        stream.write_all(Resp::integer(list.len()).as_bytes())?;
+                        stream.write_resp(Resp::integer(list.len()))?;
 
                         cv.notify_all(); // Wake up any BLPOP waiters
                     } else {
-                        stream.write_all(
-                            Resp::error(
-                                "WRONGTYPE Operation against a key holding the wrong kind of value",
-                            )
-                            .as_bytes(),
-                        )?;
+                        stream.write_resp(Resp::error(
+                            "WRONGTYPE Operation against a key holding the wrong kind of value",
+                        ))?;
                     }
                 }
                 Command::Lrange { key, start, stop } => {
@@ -243,7 +247,7 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                                     as usize;
 
                                 if start_idx >= list.len() || start_idx > stop_idx {
-                                    stream.write_all(Resp::array(0).as_bytes())?;
+                                    stream.write_resp(Resp::array(0))?;
                                 } else {
                                     let elements = &list[start_idx..=stop_idx];
 
@@ -252,16 +256,16 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                                     for el in elements {
                                         response.push_str(&Resp::bulk_string(el));
                                     }
-                                    stream.write_all(response.as_bytes())?;
+                                    stream.write_resp(response)?;
                                 }
                             } else {
                                 // If the key is a String, Redis returns an error
-                                stream.write_all(Resp::error("WRONGTYPE Operation against a key holding the wrong kind of value").as_bytes())?;
+                                stream.write_resp(Resp::error("WRONGTYPE Operation against a key holding the wrong kind of value"))?;
                             }
                         }
                         None => {
                             // If list doesn't exist, return empty array
-                            stream.write_all(Resp::array(0).as_bytes())?;
+                            stream.write_resp(Resp::array(0))?;
                         }
                     }
                 }
@@ -271,14 +275,14 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                     match db_lock.get(&key) {
                         Some(entry) => {
                             if let RedisValue::List(ref list) = entry.value {
-                                stream.write_all(Resp::integer(list.len()).as_bytes())?;
+                                stream.write_resp(Resp::integer(list.len()))?;
                             } else {
-                                stream.write_all(Resp::error("WRONGTYPE Operation against a key holding the wrong kind of value").as_bytes())?;
+                                stream.write_resp(Resp::error("WRONGTYPE Operation against a key holding the wrong kind of value"))?;
                             }
                         }
                         None => {
                             // Redis returns 0 for non-existent keys
-                            stream.write_all(b":0\r\n")?;
+                            stream.write_resp(b":0\r\n")?;
                         }
                     }
                 }
@@ -293,18 +297,18 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                                         // LPOP without count
                                         if list.is_empty() {
                                             // List exists but is empty
-                                            stream.write_all(Resp::null_bulk().as_bytes())?;
+                                            stream.write_resp(Resp::null_bulk())?;
                                         } else {
                                             // Remove the first element
                                             let val = list.remove(0);
-                                            stream.write_all(Resp::bulk_string(&val).as_bytes())?;
+                                            stream.write_resp(Resp::bulk_string(&val))?;
                                         }
                                     }
                                     Some(num) => {
                                         // LPOP with count
                                         let take_count = std::cmp::min(num, list.len());
                                         if take_count == 0 {
-                                            stream.write_all(Resp::null_array().as_bytes())?; // Or *0\r\n depending on Redis version
+                                            stream.write_resp(Resp::null_array())?; // Or *0\r\n depending on Redis version
                                         } else {
                                             // Remove the first 'n' elements from the vector
                                             let popped_elements: Vec<String> =
@@ -314,16 +318,16 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                                             for el in popped_elements {
                                                 response.push_str(&Resp::bulk_string(&el));
                                             }
-                                            stream.write_all(response.as_bytes())?;
+                                            stream.write_resp(response)?;
                                         }
                                     }
                                 }
                             } else {
-                                stream.write_all(Resp::error("WRONGTYPE Operation against a key holding the wrong kind of value").as_bytes())?;
+                                stream.write_resp(Resp::error("WRONGTYPE Operation against a key holding the wrong kind of value"))?;
                             }
                         }
                         None => {
-                            stream.write_all(Resp::null_bulk().as_bytes())?;
+                            stream.write_resp(Resp::null_bulk())?;
                         }
                     }
                 }
@@ -351,7 +355,7 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                                         val.len(),
                                         val
                                     );
-                                    stream.write_all(response.as_bytes())?;
+                                    stream.write_resp(response)?;
                                     return Ok(());
                                 }
                             }
@@ -360,7 +364,7 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                         // 2. Check if we already timed out
                         let elapsed = start_time.elapsed();
                         if timeout > 0.0 && elapsed >= timeout_duration {
-                            stream.write_all(Resp::null_array().as_bytes())?; // Redis returns Null Bulk String on timeout
+                            stream.write_resp(Resp::null_array())?; // Redis returns Null Bulk String on timeout
                             return Ok(());
                         }
 
