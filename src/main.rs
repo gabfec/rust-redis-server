@@ -124,6 +124,26 @@ fn main() {
     }
 }
 
+fn get_valid_entry<'a>(map: &'a mut HashMap<String, Entry>, key: &str) -> Option<&'a Entry> {
+    let expired = if let Some(entry) = map.get(key) {
+        if let Some(duration) = entry.expires_in {
+            entry.created_at.elapsed() > duration
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    if expired {
+        map.remove(key);
+        return None;
+    }
+
+    // Now we can safely return a reference because we know it's valid.
+    map.get(key)
+}
+
 fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
     let mut buffer = [0; 1024];
     loop {
@@ -160,35 +180,16 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                 Command::Get(key) => {
                     let mut db_lock = db.lock().unwrap();
 
-                    let is_expired = if let Some(entry) = db_lock.get(&key) {
-                        if let Some(duration) = entry.expires_in {
-                            entry.created_at.elapsed() > duration
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    };
-
-                    if is_expired {
-                        db_lock.remove(&key);
-                    }
-
-                    match db_lock.get(&key) {
-                        Some(entry) => {
-                            // We must match on the type of value stored
-                            match &entry.value {
-                                RedisValue::String(s) => {
-                                    stream.write_resp(Resp::bulk_string(&s))?;
-                                }
-                                RedisValue::List(_) => {
-                                    // Redis returns a specific error when calling GET on a List
-                                    stream.write_resp(Resp::error("WRONGTYPE Operation against a key holding the wrong kind of value"))?;
-                                }
+                    match get_valid_entry(&mut db_lock, &key) {
+                        Some(entry) => match &entry.value {
+                            RedisValue::String(s) => {
+                                stream.write_resp(Resp::bulk_string(s))?;
                             }
-                        }
+                            _ => {
+                                stream.write_resp(Resp::error("WRONGTYPE Operation against a key holding the wrong kind of value"))?;
+                            }
+                        },
                         None => {
-                            // RESP Null Bulk String (-1)
                             stream.write_resp(Resp::null_bulk())?;
                         }
                     }
@@ -384,24 +385,12 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                 Command::Type(key) => {
                     let mut map = db.lock().unwrap();
 
-                    // Check if the key exists and isn't expired
-                    let entry_type = if let Some(entry) = map.get(&key) {
-                        // Handle expiration
-                        if let Some(duration) = entry.expires_in {
-                            if entry.created_at.elapsed() > duration {
-                                map.remove(&key);
-                                "none"
-                            } else {
-                                entry.value.type_name()
-                            }
-                        } else {
-                            entry.value.type_name()
-                        }
-                    } else {
-                        "none"
+                    let response = match get_valid_entry(&mut map, &key) {
+                        Some(entry) => entry.value.type_name(),
+                        None => "none",
                     };
 
-                    stream.write_resp(Resp::string(entry_type))?;
+                    stream.write_resp(Resp::string(response))?;
                 }
             }
         }
