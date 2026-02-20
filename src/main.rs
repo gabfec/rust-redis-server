@@ -307,19 +307,15 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                                     Some(num) => {
                                         // LPOP with count
                                         let take_count = std::cmp::min(num, list.len());
-                                        if take_count == 0 {
-                                            stream.write_resp(Resp::null_array())?; // Or *0\r\n depending on Redis version
-                                        } else {
-                                            // Remove the first 'n' elements from the vector
-                                            let popped_elements: Vec<String> =
-                                                list.drain(0..take_count).collect();
+                                        // Remove the first 'n' elements from the vector
+                                        let popped_elements: Vec<String> =
+                                            list.drain(0..take_count).collect();
 
-                                            let mut response = Resp::array(popped_elements.len());
-                                            for el in popped_elements {
-                                                response.push_str(&Resp::bulk_string(&el));
-                                            }
-                                            stream.write_resp(response)?;
+                                        let mut response = Resp::array(popped_elements.len());
+                                        for el in popped_elements {
+                                            response.push_str(&Resp::bulk_string(&el));
                                         }
+                                        stream.write_resp(response)?;
                                     }
                                 }
                             } else {
@@ -338,7 +334,7 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                     let start_time = Instant::now();
 
                     loop {
-                        // 1. Try to find a non-empty list
+                        // Try to find a non-empty list
                         for key in &keys {
                             if let Some(Entry {
                                 value: RedisValue::List(list),
@@ -348,27 +344,24 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                                 if !list.is_empty() {
                                     let val = list.remove(0);
                                     // BLPOP returns a 2-element array: [key, value]
-                                    let response = format!(
-                                        "*2\r\n${}\r\n{}\r\n${}\r\n{}\r\n",
-                                        key.len(),
-                                        key,
-                                        val.len(),
-                                        val
-                                    );
+                                    let mut response = Resp::array(2);
+                                    response.push_str(&Resp::bulk_string(key));
+                                    response.push_str(&Resp::bulk_string(&val));
+
                                     stream.write_resp(response)?;
                                     return Ok(());
                                 }
                             }
                         }
 
-                        // 2. Check if we already timed out
+                        // Check if we already timed out
                         let elapsed = start_time.elapsed();
                         if timeout > 0.0 && elapsed >= timeout_duration {
                             stream.write_resp(Resp::null_array())?; // Redis returns Null Bulk String on timeout
                             return Ok(());
                         }
 
-                        // 3. Wait to be notified or for timeout
+                        // Wait to be notified or for timeout
                         if timeout == 0.0 {
                             map = cv.wait(map).unwrap();
                         } else {
