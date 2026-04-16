@@ -5,11 +5,20 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
+#[allow(dead_code)]
+#[derive(Debug)]
+struct StreamEntry {
+    id: String,
+    fields: HashMap<String, String>,
+}
+
 #[derive(Debug)]
 enum RedisValue {
     String(String),
     List(Vec<String>),
+    Stream(Vec<StreamEntry>),
 }
+
 
 #[derive(Debug)]
 struct Entry {
@@ -52,6 +61,11 @@ enum Command {
     Blpop {
         keys: Vec<String>,
         timeout: f64,
+    },
+    Xadd {
+        key: String,
+        id: String,
+        fields: HashMap<String, String>,
     },
     Type(String),
 }
@@ -97,6 +111,7 @@ impl RedisValue {
         match self {
             RedisValue::String(_) => "string",
             RedisValue::List(_) => "list",
+            RedisValue::Stream(_) => "stream",
         }
     }
 }
@@ -382,6 +397,25 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                         }
                     }
                 }
+                Command::Xadd { key, id, fields } => {
+                    let mut db_lock = db.lock().unwrap();
+
+                    let entry = db_lock.entry(key).or_insert(Entry {
+                        value: RedisValue::Stream(Vec::new()),
+                        created_at: Instant::now(),
+                        expires_in: None,
+                    });
+
+                    if let RedisValue::Stream(ref mut entries) = entry.value {
+                        // For now, we assume the ID is valid and unique as per instructions
+                        let response_id = id.clone();
+                        entries.push(StreamEntry { id, fields });
+
+                        stream.write_resp(Resp::bulk_string(&response_id))?;
+                    } else {
+                        stream.write_resp(Resp::error("WRONGTYPE Operation against a key holding the wrong kind of value"))?;
+                    }
+                }
                 Command::Type(key) => {
                     let mut map = db.lock().unwrap();
 
@@ -492,6 +526,19 @@ fn parse_message(input: &str) -> Option<Command> {
             }
 
             Some(Command::Blpop { keys, timeout })
+        }
+        "XADD" => {
+            let key = lines.get(4)?.to_string();
+            let id = lines.get(6)?.to_string();
+            let mut fields = HashMap::new();
+            let mut i = 8;
+            while i < lines.len() - 1 {
+                let field = lines.get(i)?.to_string();
+                let value = lines.get(i + 2)?.to_string();
+                fields.insert(field, value);
+                i += 4; // Skip field metadata, field, value metadata, value
+            }
+            Some(Command::Xadd { key, id, fields })
         }
         "TYPE" => {
             let key = lines.get(4)?.to_string();
