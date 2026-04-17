@@ -8,7 +8,8 @@ use std::time::{Duration, Instant};
 #[allow(dead_code)]
 #[derive(Debug)]
 struct StreamEntry {
-    id: String,
+    id_ms: u64,
+    id_seq: u64,
     fields: HashMap<String, String>,
 }
 
@@ -400,20 +401,48 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                 Command::Xadd { key, id, fields } => {
                     let mut db_lock = db.lock().unwrap();
 
-                    let entry = db_lock.entry(key).or_insert(Entry {
-                        value: RedisValue::Stream(Vec::new()),
-                        created_at: Instant::now(),
-                        expires_in: None,
-                    });
-
-                    if let RedisValue::Stream(ref mut entries) = entry.value {
-                        // For now, we assume the ID is valid and unique as per instructions
-                        let response_id = id.clone();
-                        entries.push(StreamEntry { id, fields });
-
-                        stream.write_resp(Resp::bulk_string(&response_id))?;
+                    // Parse the incoming ID
+                    let parts: Vec<&str> = id.split('-').collect();
+                    let (ms, seq) = if parts.len() == 2 {
+                        let m = parts[0].parse::<u64>().unwrap_or(0);
+                        let s = parts[1].parse::<u64>().unwrap_or(0);
+                        (m, s)
                     } else {
-                        stream.write_resp(Resp::error("WRONGTYPE Operation against a key holding the wrong kind of value"))?;
+                        (0, 0) // Fallback for malformed
+                    };
+
+                    // Validate against "0-0"
+                    if ms == 0 && seq == 0 {
+                        stream.write_resp(Resp::error("ERR The ID specified in XADD must be greater than 0-0"))?;
+                    } else {
+                        let entry = db_lock.entry(key).or_insert(Entry {
+                            value: RedisValue::Stream(Vec::new()),
+                            created_at: Instant::now(),
+                            expires_in: None,
+                        });
+
+                        if let RedisValue::Stream(ref mut entries) = entry.value {
+                            let mut is_valid = true;
+
+                            // Compare with the last entry if it exists
+                            if let Some(last) = entries.last() {
+                                let is_greater = ms > last.id_ms || (ms == last.id_ms && seq > last.id_seq);
+
+                                if !is_greater {
+                                    stream.write_resp(Resp::error("ERR The ID specified in XADD is equal or smaller than the target stream top item"))?;
+                                    is_valid = false;
+                                }
+                            }
+
+                            if is_valid {
+                                entries.push(StreamEntry { id_ms: ms, id_seq: seq, fields });
+
+                                let response_id = format!("{}-{}", ms, seq);
+                                stream.write_resp(Resp::bulk_string(&response_id))?;
+                            }
+                        } else {
+                            stream.write_resp(Resp::error("WRONGTYPE Operation against a key holding the wrong kind of value"))?;
+                        }
                     }
                 }
                 Command::Type(key) => {
