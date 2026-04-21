@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::io::{Read, Result as IoResult, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 #[allow(dead_code)]
 #[derive(Debug)]
@@ -401,25 +401,30 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                 Command::Xadd { key, id, fields } => {
                     let mut db_lock = db.lock().unwrap();
 
-                    // Parse the incoming ID
-                    let parts: Vec<&str> = id.split('-').collect();
-                    if parts.len() != 2 {
-                        stream.write_resp(Resp::error("ERR Invalid ID format"))?;
-                    } else {
-                        let ms_str = parts[0];
-                        let seq_str = parts[1];
+                    let entry = db_lock.entry(key).or_insert(Entry {
+                        value: RedisValue::Stream(Vec::new()),
+                        created_at: Instant::now(),
+                        expires_in: None,
+                    });
 
-                        let ms = ms_str.parse::<u64>().unwrap_or(0);
+                    if let RedisValue::Stream(ref mut entries) = entry.value {
+                        let last_entry = entries.last();
 
-                        let entry = db_lock.entry(key).or_insert(Entry {
-                            value: RedisValue::Stream(Vec::new()),
-                            created_at: Instant::now(),
-                            expires_in: None,
-                        });
+                        let (ms, seq) = if id == "*" {
+                            let now_ms = SystemTime::now()
+                                .duration_since(SystemTime::UNIX_EPOCH)
+                                .unwrap()
+                                .as_millis() as u64;
 
-                        if let RedisValue::Stream(ref mut entries) = entry.value {
-                            // Determine the sequence number
-                            let last_entry = entries.last();
+                            match last_entry {
+                                Some(last) if last.id_ms == now_ms => (now_ms, last.id_seq + 1),
+                                _ => (now_ms, 0),
+                            }
+                        } else {
+                            // Handle "ms-seq" or "ms-*"
+                            let parts: Vec<&str> = id.split('-').collect();
+                            let ms = parts[0].parse::<u64>().unwrap_or(0);
+                            let seq_str = parts.get(1).cloned().unwrap_or("");
 
                             let seq = if seq_str == "*" {
                                 match last_entry {
@@ -430,32 +435,33 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                             } else {
                                 seq_str.parse::<u64>().unwrap_or(0)
                             };
+                            (ms, seq)
+                        };
 
-                            let mut is_valid = true;
+                        let mut is_valid = true;
 
-                            // Validate against "0-0"
-                            if ms == 0 && seq == 0 {
-                                stream.write_resp(Resp::error("ERR The ID specified in XADD must be greater than 0-0"))?;
+                        // Validate against "0-0"
+                        if id != "*" && ms == 0 && seq == 0 {
+                            stream.write_resp(Resp::error("ERR The ID specified in XADD must be greater than 0-0"))?;
+                            is_valid = false;
+                        }
+                        else if let Some(last) = last_entry {
+                            // Must be strictly greater than the top item
+                            let is_greater = ms > last.id_ms || (ms == last.id_ms && seq > last.id_seq);
+                            if !is_greater {
+                                stream.write_resp(Resp::error("ERR The ID specified in XADD is equal or smaller than the target stream top item"))?;
                                 is_valid = false;
                             }
-                            else if let Some(last) = last_entry {
-                                // Must be strictly greater than the top item
-                                let is_greater = ms > last.id_ms || (ms == last.id_ms && seq > last.id_seq);
-                                if !is_greater {
-                                    stream.write_resp(Resp::error("ERR The ID specified in XADD is equal or smaller than the target stream top item"))?;
-                                    is_valid = false;
-                                }
-                            }
-
-                            if is_valid {
-                                entries.push(StreamEntry { id_ms: ms, id_seq: seq, fields });
-
-                                let response_id = format!("{}-{}", ms, seq);
-                                stream.write_resp(Resp::bulk_string(&response_id))?;
-                            }
-                        } else {
-                            stream.write_resp(Resp::error("WRONGTYPE Operation against a key holding the wrong kind of value"))?;
                         }
+
+                        if is_valid {
+                            entries.push(StreamEntry { id_ms: ms, id_seq: seq, fields });
+
+                            let response_id = format!("{}-{}", ms, seq);
+                            stream.write_resp(Resp::bulk_string(&response_id))?;
+                        }
+                    } else {
+                        stream.write_resp(Resp::error("WRONGTYPE Operation against a key holding the wrong kind of value"))?;
                     }
                 }
                 Command::Type(key) => {
