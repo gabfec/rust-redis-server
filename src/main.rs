@@ -68,6 +68,11 @@ enum Command {
         id: String,
         fields: HashMap<String, String>,
     },
+    Xrange {
+        key: String,
+        start: String,
+        end: String,
+    },
     Type(String),
 }
 
@@ -464,6 +469,56 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                         stream.write_resp(Resp::error("WRONGTYPE Operation against a key holding the wrong kind of value"))?;
                     }
                 }
+                Command::Xrange { key, start, end } => {
+                    let db_lock = db.lock().unwrap();
+
+                    // Helper to parse inclusive range boundaries
+                    let parse_boundary = |s: &str, is_start: bool| -> (u64, u64) {
+                        let parts: Vec<&str> = s.split('-').collect();
+                        let ms = parts[0].parse::<u64>().unwrap_or(0);
+                        let seq = if parts.len() > 1 {
+                            parts[1].parse::<u64>().unwrap_or(0)
+                        } else if is_start {
+                            0
+                        } else {
+                            u64::MAX
+                        };
+                        (ms, seq)
+                    };
+
+                    let (start_ms, start_seq) = parse_boundary(&start, true);
+                    let (end_ms, end_seq) = parse_boundary(&end, false);
+
+                    if let Some(Entry { value: RedisValue::Stream(entries), .. }) = db_lock.get(&key) {
+                        // Filter entries based on the range
+                        let filtered: Vec<&StreamEntry> = entries
+                            .iter()
+                            .filter(|e| {
+                                let after_start = e.id_ms > start_ms || (e.id_ms == start_ms && e.id_seq >= start_seq);
+                                let before_end = e.id_ms < end_ms || (e.id_ms == end_ms && e.id_seq <= end_seq);
+                                after_start && before_end
+                            })
+                            .collect();
+
+                        // Construct the nested RESP array
+                        let mut response = Resp::array(filtered.len());
+                        for entry in filtered {
+                            // Each entry is a 2-element array: [ID, [fields]]
+                            response.push_str(&Resp::array(2));
+                            response.push_str(&Resp::bulk_string(&format!("{}-{}", entry.id_ms, entry.id_seq)));
+
+                            // Fields are an array of strings: [key1, val1, key2, val2...]
+                            response.push_str(&Resp::array(entry.fields.len() * 2));
+                            for (f, v) in &entry.fields {
+                                response.push_str(&Resp::bulk_string(f));
+                                response.push_str(&Resp::bulk_string(v));
+                            }
+                        }
+                        stream.write_resp(response)?;
+                    } else {
+                        stream.write_resp(Resp::array(0))?;
+                    }
+                }
                 Command::Type(key) => {
                     let mut map = db.lock().unwrap();
 
@@ -587,6 +642,12 @@ fn parse_message(input: &str) -> Option<Command> {
                 i += 4; // Skip field metadata, field, value metadata, value
             }
             Some(Command::Xadd { key, id, fields })
+        }
+        "XRANGE" => {
+            let key = lines.get(4)?.to_string();
+            let start = lines.get(6)?.to_string();
+            let end = lines.get(8)?.to_string();
+            Some(Command::Xrange { key, start, end })
         }
         "TYPE" => {
             let key = lines.get(4)?.to_string();
