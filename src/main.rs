@@ -73,6 +73,10 @@ enum Command {
         start: String,
         end: String,
     },
+    Xread {
+        keys: Vec<String>,
+        ids: Vec<String>,
+    },
     Type(String),
 }
 
@@ -519,6 +523,55 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                         stream.write_resp(Resp::array(0))?;
                     }
                 }
+                Command::Xread { keys, ids } => {
+                    let db_lock = db.lock().unwrap();
+                    let mut response = Resp::array(keys.len());
+
+                    for (i, key) in keys.iter().enumerate() {
+                        let start_id_str = &ids[i];
+
+                        // Parse the boundary ID
+                        let parts: Vec<&str> = start_id_str.split('-').collect();
+                        let start_ms = parts[0].parse::<u64>().unwrap_or(0);
+                        let start_seq = parts.get(1).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+
+                        if let Some(Entry { value: RedisValue::Stream(entries), .. }) = db_lock.get(key) {
+                            // Filter: Strictly GREATER than start_id
+                            let filtered: Vec<&StreamEntry> = entries
+                                .iter()
+                                .filter(|e| {
+                                    e.id_ms > start_ms || (e.id_ms == start_ms && e.id_seq > start_seq)
+                                })
+                                .collect();
+
+                            // Stream result: [key, [entries]]
+                            let mut stream_res = Resp::array(2);
+                            stream_res.push_str(&Resp::bulk_string(key));
+
+                            // Entries array
+                            let mut entries_res = Resp::array(filtered.len());
+                            for entry in filtered {
+                                let mut entry_data = Resp::array(2);
+                                entry_data.push_str(&Resp::bulk_string(&format!("{}-{}", entry.id_ms, entry.id_seq)));
+
+                                let mut fields_res = Resp::array(entry.fields.len() * 2);
+                                for (f, v) in &entry.fields {
+                                    fields_res.push_str(&Resp::bulk_string(f));
+                                    fields_res.push_str(&Resp::bulk_string(v));
+                                }
+                                entry_data.push_str(&fields_res);
+                                entries_res.push_str(&entry_data);
+                            }
+
+                            stream_res.push_str(&entries_res);
+                            response.push_str(&stream_res);
+                        } else {
+                            // Key not found
+                            response.push_str(&Resp::null_bulk());
+                        }
+                    }
+                    stream.write_resp(response)?;
+                }
                 Command::Type(key) => {
                     let mut map = db.lock().unwrap();
 
@@ -648,6 +701,15 @@ fn parse_message(input: &str) -> Option<Command> {
             let start = lines.get(6)?.to_string();
             let end = lines.get(8)?.to_string();
             Some(Command::Xrange { key, start, end })
+        }
+        "XREAD" => {
+            // lines[4] = "STREAMS", lines[6] = "stream_key", lines[8] = "0-0"
+            let key = lines.get(6)?.to_string();
+            let id = lines.get(8)?.to_string();
+            Some(Command::Xread {
+                keys: vec![key],
+                ids: vec![id],
+            })
         }
         "TYPE" => {
             let key = lines.get(4)?.to_string();
