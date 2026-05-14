@@ -525,7 +525,7 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                 }
                 Command::Xread { keys, ids } => {
                     let db_lock = db.lock().unwrap();
-                    let mut response = Resp::array(keys.len());
+                    let mut response_array = Vec::new();
 
                     for (i, key) in keys.iter().enumerate() {
                         let start_id_str = &ids[i];
@@ -544,33 +544,37 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                                 })
                                 .collect();
 
-                            // Stream result: [key, [entries]]
-                            let mut stream_res = Resp::array(2);
-                            stream_res.push_str(&Resp::bulk_string(key));
+                            if !filtered.is_empty() {
+                                // Stream result: [key, [entries]]
+                                let mut stream_res = Resp::array(2);
+                                stream_res.push_str(&Resp::bulk_string(key));
 
-                            // Entries array
-                            let mut entries_res = Resp::array(filtered.len());
-                            for entry in filtered {
-                                let mut entry_data = Resp::array(2);
-                                entry_data.push_str(&Resp::bulk_string(&format!("{}-{}", entry.id_ms, entry.id_seq)));
+                                // Entries array
+                                let mut entries_res = Resp::array(filtered.len());
+                                for entry in filtered {
+                                    let mut entry_data = Resp::array(2);
+                                    entry_data.push_str(&Resp::bulk_string(&format!("{}-{}", entry.id_ms, entry.id_seq)));
 
-                                let mut fields_res = Resp::array(entry.fields.len() * 2);
-                                for (f, v) in &entry.fields {
-                                    fields_res.push_str(&Resp::bulk_string(f));
-                                    fields_res.push_str(&Resp::bulk_string(v));
+                                    let mut fields_res = Resp::array(entry.fields.len() * 2);
+                                    for (f, v) in &entry.fields {
+                                        fields_res.push_str(&Resp::bulk_string(f));
+                                        fields_res.push_str(&Resp::bulk_string(v));
+                                    }
+                                    entry_data.push_str(&fields_res);
+                                    entries_res.push_str(&entry_data);
                                 }
-                                entry_data.push_str(&fields_res);
-                                entries_res.push_str(&entry_data);
+                                stream_res.push_str(&entries_res);
+                                response_array.push(stream_res);
                             }
-
-                            stream_res.push_str(&entries_res);
-                            response.push_str(&stream_res);
-                        } else {
-                            // Key not found
-                            response.push_str(&Resp::null_bulk());
                         }
                     }
-                    stream.write_resp(response)?;
+
+                    // Wrap the collected streams into the final RESP array
+                    let mut final_resp = Resp::array(response_array.len());
+                    for s in response_array {
+                        final_resp.push_str(&s);
+                    }
+                    stream.write_resp(final_resp)?;
                 }
                 Command::Type(key) => {
                     let mut map = db.lock().unwrap();
@@ -703,12 +707,23 @@ fn parse_message(input: &str) -> Option<Command> {
             Some(Command::Xrange { key, start, end })
         }
         "XREAD" => {
-            // lines[4] = "STREAMS", lines[6] = "stream_key", lines[8] = "0-0"
-            let key = lines.get(6)?.to_string();
-            let id = lines.get(8)?.to_string();
+            // lines[4] is "STREAMS"
+            // From index 6, 8, 10, ... we have keys and IDs
+            // Ex: STREAMS key1 key2 id1 id2
+
+            let mut args = Vec::new();
+            let mut i = 6;
+            while let Some(arg) = lines.get(i) {
+                args.push(arg.to_string());
+                i += 2; // RESP layout: $len\r\nValue\r\n -> skip 2 to get next value
+            }
+
+            let num_streams = args.len() / 2;
+            let (keys, ids) = args.split_at(num_streams);
+
             Some(Command::Xread {
-                keys: vec![key],
-                ids: vec![id],
+                keys: keys.to_vec(),
+                ids: ids.to_vec(),
             })
         }
         "TYPE" => {
