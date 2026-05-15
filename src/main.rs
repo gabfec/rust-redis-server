@@ -526,6 +526,10 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                 }
                 Command::Xread { keys, ids, block_timeout } => {
                     let start_time = std::time::Instant::now();
+
+                    // Distinguish between no block, blocking with a timeout, and blocking indefinitely (0)
+                    let is_blocking = block_timeout.is_some();
+                    let is_indefinite = block_timeout == Some(0);
                     let timeout = block_timeout.map(std::time::Duration::from_millis);
 
                     let mut final_response = String::new();
@@ -593,10 +597,14 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                         drop(db_lock);
 
                         // If no data was found, decide if we should block or time out
-                        if let Some(t) = timeout {
-                            if start_time.elapsed() >= t {
-                                // Timeout expired, break out to return Null Array
-                                break;
+                        if is_blocking {
+                            if !is_indefinite {
+                                if let Some(t) = timeout {
+                                    if start_time.elapsed() >= t {
+                                        // Timeout expired, break out to return Null Array
+                                        break;
+                                    }
+                                }
                             }
                             // Sleep briefly to yield execution to other threads
                             std::thread::sleep(std::time::Duration::from_millis(50));
