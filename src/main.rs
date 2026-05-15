@@ -76,6 +76,7 @@ enum Command {
     Xread {
         keys: Vec<String>,
         ids: Vec<String>,
+        block_timeout: Option<u64>, // Block timeout in milliseconds
     },
     Type(String),
 }
@@ -523,58 +524,94 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                         stream.write_resp(Resp::array(0))?;
                     }
                 }
-                Command::Xread { keys, ids } => {
-                    let db_lock = db.lock().unwrap();
-                    let mut response_array = Vec::new();
+                Command::Xread { keys, ids, block_timeout } => {
+                    let start_time = std::time::Instant::now();
+                    let timeout = block_timeout.map(std::time::Duration::from_millis);
 
-                    for (i, key) in keys.iter().enumerate() {
-                        let start_id_str = &ids[i];
+                    let mut final_response = String::new();
+                    let mut data_found = false;
 
-                        // Parse the boundary ID
-                        let parts: Vec<&str> = start_id_str.split('-').collect();
-                        let start_ms = parts[0].parse::<u64>().unwrap_or(0);
-                        let start_seq = parts.get(1).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+                    loop {
+                        let db_lock = db.lock().unwrap();
+                        let mut response_array = Vec::new();
 
-                        if let Some(Entry { value: RedisValue::Stream(entries), .. }) = db_lock.get(key) {
-                            // Filter: Strictly GREATER than start_id
-                            let filtered: Vec<&StreamEntry> = entries
-                                .iter()
-                                .filter(|e| {
-                                    e.id_ms > start_ms || (e.id_ms == start_ms && e.id_seq > start_seq)
-                                })
-                                .collect();
+                        for (i, key) in keys.iter().enumerate() {
+                            let start_id_str = &ids[i];
 
-                            if !filtered.is_empty() {
-                                // Stream result: [key, [entries]]
-                                let mut stream_res = Resp::array(2);
-                                stream_res.push_str(&Resp::bulk_string(key));
+                            // Parse the boundary ID
+                            let parts: Vec<&str> = start_id_str.split('-').collect();
+                            let start_ms = parts[0].parse::<u64>().unwrap_or(0);
+                            let start_seq = parts.get(1).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
 
-                                // Entries array
-                                let mut entries_res = Resp::array(filtered.len());
-                                for entry in filtered {
-                                    let mut entry_data = Resp::array(2);
-                                    entry_data.push_str(&Resp::bulk_string(&format!("{}-{}", entry.id_ms, entry.id_seq)));
+                            if let Some(Entry { value: RedisValue::Stream(entries), .. }) = db_lock.get(key) {
+                                // Filter: Strictly GREATER than start_id
+                                let filtered: Vec<&StreamEntry> = entries
+                                    .iter()
+                                    .filter(|e| {
+                                        e.id_ms > start_ms || (e.id_ms == start_ms && e.id_seq > start_seq)
+                                    })
+                                    .collect();
 
-                                    let mut fields_res = Resp::array(entry.fields.len() * 2);
-                                    for (f, v) in &entry.fields {
-                                        fields_res.push_str(&Resp::bulk_string(f));
-                                        fields_res.push_str(&Resp::bulk_string(v));
+                                if !filtered.is_empty() {
+                                    // Stream result: [key, [entries]]
+                                    let mut stream_res = Resp::array(2);
+                                    stream_res.push_str(&Resp::bulk_string(key));
+
+                                    // Entries array
+                                    let mut entries_res = Resp::array(filtered.len());
+                                    for entry in filtered {
+                                        let mut entry_data = Resp::array(2);
+                                        entry_data.push_str(&Resp::bulk_string(&format!("{}-{}", entry.id_ms, entry.id_seq)));
+
+                                        let mut fields_res = Resp::array(entry.fields.len() * 2);
+                                        for (f, v) in &entry.fields {
+                                            fields_res.push_str(&Resp::bulk_string(f));
+                                            fields_res.push_str(&Resp::bulk_string(v));
+                                        }
+                                        entry_data.push_str(&fields_res);
+                                        entries_res.push_str(&entry_data);
                                     }
-                                    entry_data.push_str(&fields_res);
-                                    entries_res.push_str(&entry_data);
+                                    stream_res.push_str(&entries_res);
+                                    response_array.push(stream_res);
                                 }
-                                stream_res.push_str(&entries_res);
-                                response_array.push(stream_res);
                             }
+                        }
+
+                        // Check if we captured anything across any of the requested streams
+                        if !response_array.is_empty() {
+                            // Wrap the collected streams into the final RESP array
+                            let mut final_resp = Resp::array(response_array.len());
+                            for s in response_array {
+                                final_resp.push_str(&s);
+                            }
+                            final_response = final_resp;
+                            data_found = true;
+                            break; // Break loop to send data back
+                        }
+
+                        // Drop the db_lock explicitly so other incoming connection threads (like XADD) can mutate the DB
+                        drop(db_lock);
+
+                        // If no data was found, decide if we should block or time out
+                        if let Some(t) = timeout {
+                            if start_time.elapsed() >= t {
+                                // Timeout expired, break out to return Null Array
+                                break;
+                            }
+                            // Sleep briefly to yield execution to other threads
+                            std::thread::sleep(std::time::Duration::from_millis(50));
+                        } else {
+                            // No block specified, immediately break out
+                            break;
                         }
                     }
 
-                    // Wrap the collected streams into the final RESP array
-                    let mut final_resp = Resp::array(response_array.len());
-                    for s in response_array {
-                        final_resp.push_str(&s);
+                    // Send the resulting payload back over the TCP stream
+                    if data_found {
+                        stream.write_resp(final_response)?;
+                    } else {
+                        stream.write_resp(Resp::null_array().to_string())?;
                     }
-                    stream.write_resp(final_resp)?;
                 }
                 Command::Type(key) => {
                     let mut map = db.lock().unwrap();
@@ -707,12 +744,20 @@ fn parse_message(input: &str) -> Option<Command> {
             Some(Command::Xrange { key, start, end })
         }
         "XREAD" => {
-            // lines[4] is "STREAMS"
-            // From index 6, 8, 10, ... we have keys and IDs
-            // Ex: STREAMS key1 key2 id1 id2
+            let mut block_timeout = None;
+            let mut streams_index = 4; // Default index for STREAMS if no BLOCK is present
 
+            // Check if the next argument is "BLOCK"
+            if lines.get(4).map(|s| s.to_uppercase()) == Some("BLOCK".to_string()) {
+                if let Some(block_ms_str) = lines.get(6) {
+                    block_timeout = block_ms_str.parse::<u64>().ok();
+                }
+                streams_index = 8; // "STREAMS" moves further down the array
+            }
+
+            // Collect all remaining keys and IDs after "STREAMS"
             let mut args = Vec::new();
-            let mut i = 6;
+            let mut i = streams_index + 2;
             while let Some(arg) = lines.get(i) {
                 args.push(arg.to_string());
                 i += 2; // RESP layout: $len\r\nValue\r\n -> skip 2 to get next value
@@ -724,6 +769,7 @@ fn parse_message(input: &str) -> Option<Command> {
             Some(Command::Xread {
                 keys: keys.to_vec(),
                 ids: ids.to_vec(),
+                block_timeout,
             })
         }
         "TYPE" => {
