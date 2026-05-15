@@ -524,13 +524,34 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                         stream.write_resp(Resp::array(0))?;
                     }
                 }
-                Command::Xread { keys, ids, block_timeout } => {
+                Command::Xread { keys, mut ids, block_timeout } => {
                     let start_time = std::time::Instant::now();
 
                     // Distinguish between no block, blocking with a timeout, and blocking indefinitely (0)
                     let is_blocking = block_timeout.is_some();
                     let is_indefinite = block_timeout == Some(0);
                     let timeout = block_timeout.map(std::time::Duration::from_millis);
+
+                    // Resolve '$' IDs before entering the polling loop
+                    {
+                        let db_lock = db.lock().unwrap();
+                        for (i, key) in keys.iter().enumerate() {
+                            if ids[i] == "$" {
+                                if let Some(Entry { value: RedisValue::Stream(entries), .. }) = db_lock.get(key) {
+                                    if let Some(last) = entries.last() {
+                                        // Replace '$' with the actual highest ID currently in the stream
+                                        ids[i] = format!("{}-{}", last.id_ms, last.id_seq);
+                                    } else {
+                                        // Stream exists but is empty
+                                        ids[i] = "0-0".to_string();
+                                    }
+                                } else {
+                                    // Stream doesn't exist yet
+                                    ids[i] = "0-0".to_string();
+                                }
+                            }
+                        }
+                    }
 
                     let mut final_response = String::new();
                     let mut data_found = false;
@@ -540,6 +561,7 @@ fn handle_connection(mut stream: TcpStream, db: Db, cv: Cv) -> IoResult<()> {
                         let mut response_array = Vec::new();
 
                         for (i, key) in keys.iter().enumerate() {
+                            // ids[i] now contains either the explicit ID or the resolved '$' ID
                             let start_id_str = &ids[i];
 
                             // Parse the boundary ID
