@@ -1,31 +1,30 @@
-#![allow(unused_imports)]
-use std::net::TcpListener;
-use std::sync::{Arc, Condvar, Mutex};
-
-mod command;
-mod db;
-mod handlers;
+mod commands;
+mod connection;
 mod resp;
+mod server;
+mod store;
+
+use std::net::TcpListener;
+use std::sync::Arc;
+
+use server::ServerState;
 
 fn main() {
-    // You can use print statements as follows for debugging, they'll be visible when running tests.
-    println!("Logs from your program will appear here!");
-
     let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
-    let db: db::Db = Arc::new(Mutex::new(std::collections::HashMap::new()));
-    let cv = Arc::new(Condvar::new());
+    let server = Arc::new(ServerState::new());
 
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
                 println!("accepted new connection");
-                let db_clone = Arc::clone(&db);
-                let cv_clone = Arc::clone(&cv);
-                std::thread::spawn(|| handlers::handle_connection(stream, db_clone, cv_clone).unwrap());
+                let server = Arc::clone(&server);
+                std::thread::spawn(move || {
+                    if let Err(e) = connection::handle(stream, &server) {
+                        eprintln!("connection error: {e}");
+                    }
+                });
             }
-            Err(e) => {
-                println!("error: {}", e);
-            }
+            Err(e) => eprintln!("error: {e}"),
         }
     }
 }
