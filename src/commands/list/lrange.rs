@@ -24,11 +24,12 @@ impl Command for Lrange {
         };
 
         let len = list.len() as i64;
-        let start = (if self.start < 0 { len + self.start } else { self.start }).clamp(0, len) as usize;
-        let stop = (if self.stop < 0 { len + self.stop } else { self.stop }).clamp(0, len - 1) as usize;
-        if start >= list.len() || start > stop {
+        let normalize = |i: i64| if i < 0 { (len + i).max(0) } else { i };
+        let start = normalize(self.start);
+        let stop = normalize(self.stop).min(len - 1);
+        if start > stop {
             return Ok(RespValue::Array(vec![]));
         }
-        Ok(RespValue::bulk_array(list.range(start..=stop).cloned()))
+        Ok(RespValue::bulk_array(list.range(start as usize..=stop as usize).cloned()))
     }
 }
