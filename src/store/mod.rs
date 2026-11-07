@@ -1,13 +1,13 @@
 mod stream;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 pub use stream::{Stream, StreamEntry, StreamId};
 
 pub enum Value {
     String(String),
-    List(Vec<String>),
+    List(VecDeque<String>),
     Stream(Stream),
 }
 
@@ -79,7 +79,7 @@ impl Store {
         }
     }
 
-    pub fn get_list(&mut self, key: &str) -> Result<Option<&Vec<String>>, WrongType> {
+    pub fn get_list(&mut self, key: &str) -> Result<Option<&VecDeque<String>>, WrongType> {
         match self.get(key) {
             None => Ok(None),
             Some(Value::List(l)) => Ok(Some(l)),
@@ -87,7 +87,7 @@ impl Store {
         }
     }
 
-    pub fn get_list_mut(&mut self, key: &str) -> Result<Option<&mut Vec<String>>, WrongType> {
+    pub fn get_list_mut(&mut self, key: &str) -> Result<Option<&mut VecDeque<String>>, WrongType> {
         match self.get_mut(key) {
             None => Ok(None),
             Some(Value::List(l)) => Ok(Some(l)),
@@ -95,8 +95,8 @@ impl Store {
         }
     }
 
-    pub fn list_or_create(&mut self, key: String) -> Result<&mut Vec<String>, WrongType> {
-        match self.get_or_insert(key, || Value::List(Vec::new())) {
+    pub fn list_or_create(&mut self, key: String) -> Result<&mut VecDeque<String>, WrongType> {
+        match self.get_or_insert(key, || Value::List(VecDeque::new())) {
             Value::List(l) => Ok(l),
             _ => Err(WrongType),
         }

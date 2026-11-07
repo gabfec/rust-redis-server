@@ -26,8 +26,7 @@ impl Command for Lpop {
             return Ok(RespValue::NullBulk);
         };
         Ok(match self.count {
-            None if list.is_empty() => RespValue::NullBulk,
-            None => RespValue::bulk(list.remove(0)),
+            None => list.pop_front().map_or(RespValue::NullBulk, RespValue::bulk),
             Some(n) => {
                 let n = n.min(list.len());
                 RespValue::bulk_array(list.drain(..n))

@@ -28,10 +28,7 @@ impl Command for Blpop {
         let popped = ctx.server.wait_for(self.timeout, |store| {
             self.keys.iter().find_map(|key| {
                 let list = store.get_list_mut(key).ok()??;
-                if list.is_empty() {
-                    return None;
-                }
-                let value = list.remove(0);
+                let value = list.pop_front()?;
                 Some(RespValue::bulk_array([key.clone(), value]))
             })
         });

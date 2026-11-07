@@ -29,6 +29,6 @@ impl Command for Lrange {
         if start >= list.len() || start > stop {
             return Ok(RespValue::Array(vec![]));
         }
-        Ok(RespValue::bulk_array(list[start..=stop].iter().cloned()))
+        Ok(RespValue::bulk_array(list.range(start..=stop).cloned()))
     }
 }

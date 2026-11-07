@@ -20,7 +20,7 @@ impl Command for Lpush {
         let mut store = ctx.server.store();
         let list = store.list_or_create(self.key)?;
         for value in self.values {
-            list.insert(0, value);
+            list.push_front(value);
         }
         Ok(RespValue::Integer(list.len() as i64))
     }
