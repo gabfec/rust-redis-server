@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use super::{entry_to_resp, invalid_id};
 use crate::commands::{Args, CmdError, Command, Ctx};
@@ -64,22 +64,15 @@ impl Command for Xread {
             ids
         };
 
-        let start = Instant::now();
-        loop {
-            let found = read_streams(&mut ctx.server.store(), &self.keys, &ids, self.count)?;
-            if let Some(reply) = found {
-                return Ok(reply);
-            }
-            match self.block {
-                None => return Ok(RespValue::NullArray),
-                Some(0) => {} // forever
-                Some(ms) if start.elapsed() >= Duration::from_millis(ms) => {
-                    return Ok(RespValue::NullArray);
-                }
-                Some(_) => {}
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
+        let timeout = match self.block {
+            None => Some(Duration::ZERO), // check once
+            Some(0) => None,              // forever
+            Some(ms) => Some(Duration::from_millis(ms)),
+        };
+        let result = ctx.server.wait_for(timeout, |store| {
+            read_streams(store, &self.keys, &ids, self.count).transpose()
+        });
+        Ok(result.transpose()?.unwrap_or(RespValue::NullArray))
     }
 }
 
