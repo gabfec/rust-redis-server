@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::invalid_id;
@@ -10,7 +9,7 @@ use crate::store::{Stream, StreamEntry, StreamId};
 pub struct Xadd {
     key: String,
     id: IdSpec,
-    fields: HashMap<String, String>,
+    fields: Vec<(String, String)>,
 }
 
 enum IdSpec {

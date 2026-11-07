@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 
@@ -37,7 +36,8 @@ impl FromStr for StreamId {
 
 pub struct StreamEntry {
     pub id: StreamId,
-    pub fields: HashMap<String, String>,
+    /// Kept in insertion order, like Redis.
+    pub fields: Vec<(String, String)>,
 }
 
 /// Entries are always sorted by id (XADD only appends larger ids).
