@@ -10,6 +10,7 @@ pub struct StreamId {
 
 impl StreamId {
     pub const MIN: StreamId = StreamId { ms: 0, seq: 0 };
+    pub const MAX: StreamId = StreamId { ms: u64::MAX, seq: u64::MAX };
 
     pub fn new(ms: u64, seq: u64) -> Self {
         StreamId { ms, seq }

@@ -3,7 +3,7 @@ use crate::commands::{Args, CmdError, Command, Ctx};
 use crate::resp::RespValue;
 use crate::store::StreamId;
 
-/// XRANGE key start end   (inclusive; `-` = min)
+/// XRANGE key start end   (inclusive; `-` / `+` = min / max)
 pub struct Xrange {
     key: String,
     start: StreamId,
@@ -29,10 +29,11 @@ impl Command for Xrange {
     }
 }
 
-/// `-`, `<ms>` (seq defaults to `missing_seq`) or `<ms>-<seq>`.
+/// `-`, `+`, `<ms>` (seq defaults to `missing_seq`) or `<ms>-<seq>`.
 fn parse_bound(s: &str, missing_seq: u64) -> Result<StreamId, CmdError> {
     match s {
         "-" => Ok(StreamId::MIN),
+        "+" => Ok(StreamId::MAX),
         _ if !s.contains('-') => {
             s.parse().map(|ms| StreamId::new(ms, missing_seq)).map_err(|_| invalid_id())
         }
