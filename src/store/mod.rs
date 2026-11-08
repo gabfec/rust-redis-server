@@ -79,6 +79,14 @@ impl Store {
         }
     }
 
+    pub fn get_string_mut(&mut self, key: &str) -> Result<Option<&mut String>, WrongType> {
+        match self.get_mut(key) {
+            None => Ok(None),
+            Some(Value::String(s)) => Ok(Some(s)),
+            Some(_) => Err(WrongType),
+        }
+    }
+
     pub fn get_list(&mut self, key: &str) -> Result<Option<&VecDeque<String>>, WrongType> {
         match self.get(key) {
             None => Ok(None),

@@ -29,6 +29,7 @@ pub fn dispatch(mut words: Vec<String>, ctx: &mut Ctx) -> RespValue {
         // strings
         "get" => run::<string::get::Get>(args, ctx),
         "set" => run::<string::set::Set>(args, ctx),
+        "incr" => run::<string::incr::Incr>(args, ctx),
         // lists
         "rpush" => run::<list::rpush::Rpush>(args, ctx),
         "lpush" => run::<list::lpush::Lpush>(args, ctx),
