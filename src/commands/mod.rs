@@ -44,6 +44,7 @@ pub fn dispatch(mut words: Vec<String>, ctx: &mut Ctx) -> RespValue {
         "xread" => run::<stream::xread::Xread>(args, ctx),
         // transactions
         "multi" => run::<transaction::multi::Multi>(args, ctx),
+        "exec" => run::<transaction::exec::Exec>(args, ctx),
 
         _ => RespValue::Error(format!("ERR unknown command '{name}'")),
     }
