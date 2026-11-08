@@ -5,9 +5,12 @@ use crate::commands::{self, Ctx};
 use crate::resp::{self, RespValue};
 use crate::server::ServerState;
 
-/// Per-connection state (MULTI queue, subscriptions, replica flag, ... go here).
+/// Per-connection state (subscriptions, replica flag, ... go here too).
 #[derive(Default)]
-pub struct ConnState {}
+pub struct ConnState {
+    /// Between MULTI and EXEC/DISCARD.
+    pub in_multi: bool,
+}
 
 pub fn handle(mut stream: TcpStream, server: &ServerState) -> io::Result<()> {
     let mut conn = ConnState::default();

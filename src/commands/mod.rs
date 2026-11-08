@@ -8,6 +8,7 @@ mod keys;
 mod list;
 mod stream;
 mod string;
+mod transaction;
 
 use std::str::FromStr;
 
@@ -41,6 +42,8 @@ pub fn dispatch(mut words: Vec<String>, ctx: &mut Ctx) -> RespValue {
         "xadd" => run::<stream::xadd::Xadd>(args, ctx),
         "xrange" => run::<stream::xrange::Xrange>(args, ctx),
         "xread" => run::<stream::xread::Xread>(args, ctx),
+        // transactions
+        "multi" => run::<transaction::multi::Multi>(args, ctx),
 
         _ => RespValue::Error(format!("ERR unknown command '{name}'")),
     }
@@ -49,7 +52,6 @@ pub fn dispatch(mut words: Vec<String>, ctx: &mut Ctx) -> RespValue {
 /// Everything a command may touch while executing.
 pub struct Ctx<'a> {
     pub server: &'a ServerState,
-    #[allow(dead_code)] // will be used by MULTI/EXEC, SUBSCRIBE, REPLCONF, ...
     pub conn: &'a mut ConnState,
 }
 
