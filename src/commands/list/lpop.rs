@@ -34,3 +34,28 @@ impl Command for Lpop {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::commands::test_util::Client;
+    use crate::resp::RespValue;
+
+    #[test]
+    fn pops_one() {
+        let mut c = Client::default();
+        assert_eq!(c.cmd(&["LPOP", "l"]), RespValue::NullBulk);
+        c.cmd(&["RPUSH", "l", "a", "b"]);
+        assert_eq!(c.cmd(&["LPOP", "l"]), RespValue::bulk("a"));
+        assert_eq!(c.cmd(&["LPOP", "l"]), RespValue::bulk("b"));
+        assert_eq!(c.cmd(&["LPOP", "l"]), RespValue::NullBulk);
+    }
+
+    #[test]
+    fn pops_count() {
+        let mut c = Client::default();
+        c.cmd(&["RPUSH", "l", "a", "b", "c"]);
+        assert_eq!(c.cmd(&["LPOP", "l", "2"]), RespValue::bulk_array(["a", "b"]));
+        assert_eq!(c.cmd(&["LPOP", "l", "10"]), RespValue::bulk_array(["c"]));
+        assert_eq!(c.cmd(&["LLEN", "l"]), RespValue::Integer(0));
+    }
+}

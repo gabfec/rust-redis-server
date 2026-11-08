@@ -21,3 +21,27 @@ impl Command for Get {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::commands::test_util::{err, Client};
+    use crate::resp::RespValue;
+
+    #[test]
+    fn get() {
+        let mut c = Client::default();
+        assert_eq!(c.cmd(&["GET", "k"]), RespValue::NullBulk);
+        c.cmd(&["SET", "k", "v"]);
+        assert_eq!(c.cmd(&["GET", "k"]), RespValue::bulk("v"));
+    }
+
+    #[test]
+    fn get_on_a_list_is_wrongtype() {
+        let mut c = Client::default();
+        c.cmd(&["RPUSH", "l", "v"]);
+        assert_eq!(
+            c.cmd(&["GET", "l"]),
+            err("WRONGTYPE Operation against a key holding the wrong kind of value")
+        );
+    }
+}

@@ -40,3 +40,31 @@ fn parse_bound(s: &str, missing_seq: u64) -> Result<StreamId, CmdError> {
         _ => s.parse().map_err(|_| invalid_id()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::entry;
+    use crate::commands::test_util::Client;
+    use crate::resp::RespValue;
+
+    #[test]
+    fn ranges() {
+        let mut c = Client::default();
+        for id in ["1-1", "1-2", "2-0", "3-5"] {
+            c.cmd(&["XADD", "s", id, "id", id]);
+        }
+        let e = |id| entry(id, &["id", id]);
+        let cases = [
+            ("1-2", "2-0", vec![e("1-2"), e("2-0")]),
+            ("1", "1", vec![e("1-1"), e("1-2")]), // ms only: whole millisecond
+            ("-", "1-1", vec![e("1-1")]),
+            ("2", "+", vec![e("2-0"), e("3-5")]),
+            ("-", "+", vec![e("1-1"), e("1-2"), e("2-0"), e("3-5")]),
+            ("4", "+", vec![]),
+        ];
+        for (start, end, expected) in cases {
+            assert_eq!(c.cmd(&["XRANGE", "s", start, end]), RespValue::Array(expected), "{start}..{end}");
+        }
+        assert_eq!(c.cmd(&["XRANGE", "missing", "-", "+"]), RespValue::Array(vec![]));
+    }
+}

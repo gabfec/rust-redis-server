@@ -95,3 +95,75 @@ fn read_streams(
     }
     Ok((!result.is_empty()).then_some(RespValue::Array(result)))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::thread::{scope, sleep};
+    use std::time::{Duration, Instant};
+
+    use super::super::entry;
+    use crate::commands::test_util::{err, run, Client};
+    use crate::connection::ConnState;
+    use crate::resp::RespValue;
+    use crate::server::ServerState;
+
+    fn stream(key: &str, entries: Vec<RespValue>) -> RespValue {
+        RespValue::Array(vec![RespValue::bulk(key), RespValue::Array(entries)])
+    }
+
+    #[test]
+    fn reads_entries_after_the_id() {
+        let mut c = Client::default();
+        c.cmd(&["XADD", "a", "1-1", "f", "1"]);
+        c.cmd(&["XADD", "a", "1-2", "f", "2"]);
+        c.cmd(&["XADD", "b", "5-0", "f", "3"]);
+        assert_eq!(
+            c.cmd(&["XREAD", "STREAMS", "a", "b", "1-1", "0"]),
+            RespValue::Array(vec![
+                stream("a", vec![entry("1-2", &["f", "2"])]),
+                stream("b", vec![entry("5-0", &["f", "3"])]),
+            ])
+        );
+        assert_eq!(
+            c.cmd(&["XREAD", "COUNT", "1", "STREAMS", "a", "0-0"]),
+            RespValue::Array(vec![stream("a", vec![entry("1-1", &["f", "1"])])])
+        );
+        assert_eq!(c.cmd(&["XREAD", "STREAMS", "a", "missing", "1-2", "0"]), RespValue::NullArray);
+    }
+
+    #[test]
+    fn block_times_out() {
+        let mut c = Client::default();
+        let start = Instant::now();
+        assert_eq!(c.cmd(&["XREAD", "BLOCK", "50", "STREAMS", "s", "$"]), RespValue::NullArray);
+        assert!(start.elapsed() >= Duration::from_millis(50));
+    }
+
+    #[test]
+    fn block_with_dollar_gets_only_new_entries() {
+        let server = ServerState::default();
+        run(&server, &mut ConnState::default(), &["XADD", "s", "1-1", "old", "x"]);
+        scope(|s| {
+            let reader = s.spawn(|| {
+                run(&server, &mut ConnState::default(), &["XREAD", "BLOCK", "2000", "STREAMS", "s", "$"])
+            });
+            sleep(Duration::from_millis(50));
+            run(&server, &mut ConnState::default(), &["XADD", "s", "2-0", "new", "y"]);
+            assert_eq!(
+                reader.join().unwrap(),
+                RespValue::Array(vec![stream("s", vec![entry("2-0", &["new", "y"])])])
+            );
+        });
+    }
+
+    #[test]
+    fn errors() {
+        let mut c = Client::default();
+        assert_eq!(
+            c.cmd(&["XREAD", "STREAMS", "a", "b", "0"]),
+            err("ERR Unbalanced 'xread' list of streams: for each stream key an ID or '$' must be specified.")
+        );
+        assert_eq!(c.cmd(&["XREAD", "FOO", "STREAMS", "a", "0"]), err("ERR syntax error"));
+        assert_eq!(c.cmd(&["XREAD", "STREAMS", "a", "x"]), err("ERR Invalid stream ID specified as stream command argument"));
+    }
+}

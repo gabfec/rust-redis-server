@@ -17,3 +17,16 @@ impl Command for Echo {
         Ok(RespValue::bulk(self.message))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::commands::test_util::{err, Client};
+    use crate::resp::RespValue;
+
+    #[test]
+    fn echo() {
+        let mut c = Client::default();
+        assert_eq!(c.cmd(&["ECHO", "hey there"]), RespValue::bulk("hey there"));
+        assert_eq!(c.cmd(&["ECHO"]), err("ERR wrong number of arguments for 'echo' command"));
+    }
+}

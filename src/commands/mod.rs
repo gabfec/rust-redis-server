@@ -144,3 +144,59 @@ impl Args {
         Ok(())
     }
 }
+
+/// Helpers for unit-testing commands without a socket.
+#[cfg(test)]
+pub mod test_util {
+    use super::{dispatch, Ctx};
+    use crate::connection::ConnState;
+    use crate::resp::RespValue;
+    use crate::server::ServerState;
+
+    /// A server plus one client connection.
+    #[derive(Default)]
+    pub struct Client {
+        pub server: ServerState,
+        pub conn: ConnState,
+    }
+
+    impl Client {
+        pub fn cmd(&mut self, words: &[&str]) -> RespValue {
+            run(&self.server, &mut self.conn, words)
+        }
+    }
+
+    /// Runs one command. Use it directly to share one server between
+    /// several connections/threads (e.g. to test blocking commands).
+    pub fn run(server: &ServerState, conn: &mut ConnState, words: &[&str]) -> RespValue {
+        let words = words.iter().map(|w| w.to_string()).collect();
+        dispatch(words, &mut Ctx { server, conn })
+    }
+
+    pub fn err(msg: &str) -> RespValue {
+        RespValue::Error(msg.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_util::{err, Client};
+
+    #[test]
+    fn unknown_command() {
+        assert_eq!(Client::default().cmd(&["NOPE", "x"]), err("ERR unknown command 'nope'"));
+    }
+
+    #[test]
+    fn command_names_are_case_insensitive() {
+        let mut c = Client::default();
+        assert_eq!(c.cmd(&["ping"]), c.cmd(&["PiNg"]));
+    }
+
+    #[test]
+    fn wrong_number_of_arguments() {
+        let mut c = Client::default();
+        assert_eq!(c.cmd(&["GET"]), err("ERR wrong number of arguments for 'get' command"));
+        assert_eq!(c.cmd(&["GET", "a", "b"]), err("ERR wrong number of arguments for 'get' command"));
+    }
+}

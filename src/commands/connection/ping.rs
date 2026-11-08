@@ -20,3 +20,17 @@ impl Command for Ping {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::commands::test_util::{err, Client};
+    use crate::resp::RespValue;
+
+    #[test]
+    fn ping() {
+        let mut c = Client::default();
+        assert_eq!(c.cmd(&["PING"]), RespValue::Simple("PONG".into()));
+        assert_eq!(c.cmd(&["PING", "hi"]), RespValue::bulk("hi"));
+        assert_eq!(c.cmd(&["PING", "a", "b"]), err("ERR wrong number of arguments for 'ping' command"));
+    }
+}

@@ -33,3 +33,45 @@ impl Command for Lrange {
         Ok(RespValue::bulk_array(list.range(start as usize..=stop as usize).cloned()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::commands::test_util::Client;
+    use crate::resp::RespValue;
+
+    fn client_with_list() -> Client {
+        let mut c = Client::default();
+        c.cmd(&["RPUSH", "l", "a", "b", "c", "d", "e"]);
+        c
+    }
+
+    #[test]
+    fn index_ranges() {
+        let mut c = client_with_list();
+        let cases: &[(&str, &str, &[&str])] = &[
+            ("0", "1", &["a", "b"]),
+            ("2", "4", &["c", "d", "e"]),
+            ("1", "100", &["b", "c", "d", "e"]),
+            ("-2", "-1", &["d", "e"]),
+            ("0", "-3", &["a", "b", "c"]),
+            ("-100", "0", &["a"]),
+            ("3", "1", &[]),
+            ("5", "10", &[]),
+        ];
+        for &(start, stop, expected) in cases {
+            assert_eq!(
+                c.cmd(&["LRANGE", "l", start, stop]),
+                RespValue::bulk_array(expected.iter().copied()),
+                "LRANGE {start} {stop}"
+            );
+        }
+    }
+
+    #[test]
+    fn missing_or_emptied_list() {
+        let mut c = client_with_list();
+        assert_eq!(c.cmd(&["LRANGE", "missing", "0", "-1"]), RespValue::Array(vec![]));
+        c.cmd(&["LPOP", "l", "5"]);
+        assert_eq!(c.cmd(&["LRANGE", "l", "0", "-1"]), RespValue::Array(vec![]));
+    }
+}

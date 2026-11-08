@@ -25,3 +25,17 @@ impl Command for Lpush {
         Ok(RespValue::Integer(list.len() as i64))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::commands::test_util::Client;
+    use crate::resp::RespValue;
+
+    #[test]
+    fn prepends_each_value_in_turn() {
+        let mut c = Client::default();
+        assert_eq!(c.cmd(&["LPUSH", "l", "c"]), RespValue::Integer(1));
+        assert_eq!(c.cmd(&["LPUSH", "l", "b", "a"]), RespValue::Integer(3));
+        assert_eq!(c.cmd(&["LRANGE", "l", "0", "-1"]), RespValue::bulk_array(["a", "b", "c"]));
+    }
+}

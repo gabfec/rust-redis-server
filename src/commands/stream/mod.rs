@@ -17,3 +17,9 @@ fn entry_to_resp(entry: &StreamEntry) -> RespValue {
 fn invalid_id() -> CmdError {
     CmdError::Other("ERR Invalid stream ID specified as stream command argument".into())
 }
+
+/// `[id, [field, value, ...]]`, as the stream commands reply.
+#[cfg(test)]
+fn entry(id: &str, fields: &[&str]) -> RespValue {
+    RespValue::Array(vec![RespValue::bulk(id), RespValue::bulk_array(fields.iter().copied())])
+}

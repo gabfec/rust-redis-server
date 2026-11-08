@@ -86,3 +86,70 @@ fn resolve_id(spec: IdSpec, last: Option<StreamId>) -> StreamId {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::entry;
+    use crate::commands::test_util::{err, Client};
+    use crate::resp::RespValue;
+
+    #[test]
+    fn explicit_ids_must_increase() {
+        let mut c = Client::default();
+        assert_eq!(c.cmd(&["XADD", "s", "1-1", "f", "v"]), RespValue::bulk("1-1"));
+        assert_eq!(c.cmd(&["XADD", "s", "1-2", "f", "v"]), RespValue::bulk("1-2"));
+        assert_eq!(
+            c.cmd(&["XADD", "s", "1-2", "f", "v"]),
+            err("ERR The ID specified in XADD is equal or smaller than the target stream top item")
+        );
+        assert_eq!(
+            c.cmd(&["XADD", "s", "0-0", "f", "v"]),
+            err("ERR The ID specified in XADD must be greater than 0-0")
+        );
+    }
+
+    #[test]
+    fn auto_sequence() {
+        let mut c = Client::default();
+        assert_eq!(c.cmd(&["XADD", "s", "0-*", "f", "v"]), RespValue::bulk("0-1"));
+        assert_eq!(c.cmd(&["XADD", "s", "5-*", "f", "v"]), RespValue::bulk("5-0"));
+        assert_eq!(c.cmd(&["XADD", "s", "5-*", "f", "v"]), RespValue::bulk("5-1"));
+    }
+
+    #[test]
+    fn fully_auto_id() {
+        let mut c = Client::default();
+        let RespValue::Bulk(first) = c.cmd(&["XADD", "s", "*", "f", "v"]) else { panic!() };
+        let RespValue::Bulk(second) = c.cmd(&["XADD", "s", "*", "f", "v"]) else { panic!() };
+        let first: crate::store::StreamId = first.parse().unwrap();
+        let second: crate::store::StreamId = second.parse().unwrap();
+        assert!(first.ms > 1_600_000_000_000, "looks like a unix time in ms");
+        assert!(second > first);
+    }
+
+    #[test]
+    fn keeps_field_order() {
+        let mut c = Client::default();
+        c.cmd(&["XADD", "s", "1-1", "z", "1", "a", "2", "m", "3"]);
+        assert_eq!(
+            c.cmd(&["XRANGE", "s", "-", "+"]),
+            RespValue::Array(vec![entry("1-1", &["z", "1", "a", "2", "m", "3"])])
+        );
+    }
+
+    #[test]
+    fn errors() {
+        let mut c = Client::default();
+        assert_eq!(c.cmd(&["XADD", "s", "1-1", "f"]), err("ERR wrong number of arguments for 'xadd' command"));
+        assert_eq!(
+            c.cmd(&["XADD", "s", "abc", "f", "v"]),
+            err("ERR Invalid stream ID specified as stream command argument")
+        );
+        c.cmd(&["SET", "k", "v"]);
+        assert_eq!(
+            c.cmd(&["XADD", "k", "1-1", "f", "v"]),
+            err("WRONGTYPE Operation against a key holding the wrong kind of value")
+        );
+        assert_eq!(c.cmd(&["TYPE", "s"]), RespValue::Simple("none".into()), "no stream created");
+    }
+}

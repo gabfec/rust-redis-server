@@ -19,3 +19,17 @@ impl Command for Llen {
         Ok(RespValue::Integer(len as i64))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::commands::test_util::Client;
+    use crate::resp::RespValue;
+
+    #[test]
+    fn length() {
+        let mut c = Client::default();
+        assert_eq!(c.cmd(&["LLEN", "l"]), RespValue::Integer(0));
+        c.cmd(&["RPUSH", "l", "a", "b"]);
+        assert_eq!(c.cmd(&["LLEN", "l"]), RespValue::Integer(2));
+    }
+}

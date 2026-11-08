@@ -23,3 +23,28 @@ impl Command for Rpush {
         Ok(RespValue::Integer(list.len() as i64))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::commands::test_util::{err, Client};
+    use crate::resp::RespValue;
+
+    #[test]
+    fn appends_and_returns_length() {
+        let mut c = Client::default();
+        assert_eq!(c.cmd(&["RPUSH", "l", "a"]), RespValue::Integer(1));
+        assert_eq!(c.cmd(&["RPUSH", "l", "b", "c"]), RespValue::Integer(3));
+        assert_eq!(c.cmd(&["LRANGE", "l", "0", "-1"]), RespValue::bulk_array(["a", "b", "c"]));
+    }
+
+    #[test]
+    fn errors() {
+        let mut c = Client::default();
+        assert_eq!(c.cmd(&["RPUSH", "l"]), err("ERR wrong number of arguments for 'rpush' command"));
+        c.cmd(&["SET", "s", "v"]);
+        assert_eq!(
+            c.cmd(&["RPUSH", "s", "x"]),
+            err("WRONGTYPE Operation against a key holding the wrong kind of value")
+        );
+    }
+}
