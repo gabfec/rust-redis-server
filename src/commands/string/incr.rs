@@ -24,7 +24,11 @@ impl Command for Incr {
             store.set(self.key, Value::String("1".into()), None);
             return Ok(RespValue::Integer(1));
         };
-        let n = value.parse::<i64>().map_err(|_| CmdError::NotInteger)? + 1;
+        let n = value
+            .parse::<i64>()
+            .map_err(|_| CmdError::NotInteger)?
+            .checked_add(1)
+            .ok_or_else(|| CmdError::Other("ERR increment or decrement would overflow".into()))?;
         *value = n.to_string();
         Ok(RespValue::Integer(n))
     }
@@ -49,5 +53,28 @@ mod tests {
         let mut c = Client::default();
         assert_eq!(c.cmd(&["INCR", "n"]), RespValue::Integer(1));
         assert_eq!(c.cmd(&["INCR", "n"]), RespValue::Integer(2));
+    }
+
+    #[test]
+    fn rejects_non_integer_values() {
+        let mut c = Client::default();
+        let not_integer = RespValue::Error("ERR value is not an integer or out of range".into());
+        for bad in ["abc", "1.5", "", "99999999999999999999"] {
+            c.cmd(&["SET", "n", bad]);
+            assert_eq!(c.cmd(&["INCR", "n"]), not_integer, "value {bad:?}");
+            assert_eq!(c.cmd(&["GET", "n"]), RespValue::bulk(bad), "value unchanged");
+        }
+    }
+
+    #[test]
+    fn rejects_overflow_and_wrong_type() {
+        let mut c = Client::default();
+        c.cmd(&["SET", "n", &i64::MAX.to_string()]);
+        assert_eq!(
+            c.cmd(&["INCR", "n"]),
+            RespValue::Error("ERR increment or decrement would overflow".into())
+        );
+        c.cmd(&["RPUSH", "l", "x"]);
+        assert!(matches!(c.cmd(&["INCR", "l"]), RespValue::Error(e) if e.starts_with("WRONGTYPE")));
     }
 }
