@@ -69,6 +69,7 @@ fn lookup(name: &str) -> Option<Handler> {
         // transactions
         "multi" => run::<transaction::multi::Multi>,
         "exec" => run::<transaction::exec::Exec>,
+        "discard" => run::<transaction::discard::Discard>,
 
         _ => return None,
     };
