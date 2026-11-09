@@ -1,4 +1,4 @@
-use crate::commands::{Args, CmdError, Command, Ctx};
+use crate::commands::{Args, CmdError, Command, Ctx, Transaction};
 use crate::resp::RespValue;
 
 /// MULTI
@@ -11,10 +11,10 @@ impl Command for Multi {
     }
 
     fn execute(self, ctx: &mut Ctx) -> Result<RespValue, CmdError> {
-        if ctx.conn.in_multi {
+        if ctx.conn.transaction.is_some() {
             return Err(CmdError::Other("ERR MULTI calls can not be nested".into()));
         }
-        ctx.conn.in_multi = true;
+        ctx.conn.transaction = Some(Transaction::default());
         Ok(RespValue::ok())
     }
 }
@@ -28,7 +28,7 @@ mod tests {
     fn starts_a_transaction() {
         let mut c = Client::default();
         assert_eq!(c.cmd(&["MULTI"]), RespValue::ok());
-        assert!(c.conn.in_multi);
+        assert!(c.conn.transaction.is_some());
         assert_eq!(
             c.cmd(&["MULTI"]),
             RespValue::Error("ERR MULTI calls can not be nested".into())

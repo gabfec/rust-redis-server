@@ -10,6 +10,8 @@ mod stream;
 mod string;
 mod transaction;
 
+pub use transaction::Transaction;
+
 use std::str::FromStr;
 use std::sync::MutexGuard;
 use std::time::Duration;
@@ -21,10 +23,20 @@ use crate::store::{Store, WrongType};
 
 pub fn dispatch(mut words: Vec<String>, ctx: &mut Ctx) -> RespValue {
     let name = words.remove(0).to_ascii_lowercase();
-    match lookup(&name) {
-        Some(handler) => handler(Args::new(name, words), ctx),
-        None => RespValue::Error(format!("ERR unknown command '{name}'")),
+    let Some(handler) = lookup(&name) else {
+        return RespValue::Error(format!("ERR unknown command '{name}'"));
+    };
+    let queue = !transaction::runs_immediately(&name);
+    let args = Args::new(name, words);
+
+    // Between MULTI and EXEC, commands are queued instead of run.
+    if let Some(tx) = &mut ctx.conn.transaction
+        && queue
+    {
+        tx.queued.push((handler, args));
+        return RespValue::Simple("QUEUED".into());
     }
+    handler(args, ctx)
 }
 
 /// Parses and runs one command.
@@ -199,6 +211,11 @@ pub mod test_util {
     impl Client {
         pub fn cmd(&mut self, words: &[&str]) -> RespValue {
             run(&self.server, &mut self.conn, words)
+        }
+
+        /// Runs a command as a different client of the same server.
+        pub fn other(&self, words: &[&str]) -> RespValue {
+            run(&self.server, &mut ConnState::default(), words)
         }
     }
 

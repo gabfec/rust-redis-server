@@ -1,15 +1,15 @@
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
 
-use crate::commands::{self, Ctx};
+use crate::commands::{self, Ctx, Transaction};
 use crate::resp::{self, RespValue};
 use crate::server::ServerState;
 
 /// Per-connection state (subscriptions, replica flag, ... go here too).
 #[derive(Default)]
 pub struct ConnState {
-    /// Between MULTI and EXEC/DISCARD.
-    pub in_multi: bool,
+    /// `Some` between MULTI and EXEC/DISCARD.
+    pub transaction: Option<Transaction>,
 }
 
 pub fn handle(mut stream: TcpStream, server: &ServerState) -> io::Result<()> {

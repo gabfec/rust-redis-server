@@ -11,11 +11,10 @@ impl Command for Exec {
     }
 
     fn execute(self, ctx: &mut Ctx) -> Result<RespValue, CmdError> {
-        if !ctx.conn.in_multi {
+        let Some(_tx) = ctx.conn.transaction.take() else {
             return Err(CmdError::Other("ERR EXEC without MULTI".into()));
-        }
-        ctx.conn.in_multi = false;
-        // Nothing is queued yet, so there are no replies to return.
+        };
+        // TODO: run the queued commands. For now they are dropped.
         Ok(RespValue::Array(vec![]))
     }
 }
@@ -36,7 +35,7 @@ mod tests {
         let mut c = Client::default();
         c.cmd(&["MULTI"]);
         assert_eq!(c.cmd(&["EXEC"]), RespValue::Array(vec![]));
-        assert!(!c.conn.in_multi);
+        assert!(c.conn.transaction.is_none());
         assert_eq!(c.cmd(&["EXEC"]), RespValue::Error("ERR EXEC without MULTI".into()));
     }
 }
