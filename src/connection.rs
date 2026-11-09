@@ -61,7 +61,7 @@ fn execute(value: RespValue, server: &ServerState, conn: &mut ConnState) -> Opti
     };
     match words {
         Some(words) if words.is_empty() => None,
-        Some(words) => Some(commands::dispatch(words, &mut Ctx { server, conn })),
+        Some(words) => Some(commands::dispatch(words, &mut Ctx::new(server, conn))),
         None => Some(RespValue::Error("ERR Protocol error: expected an array of bulk strings".into())),
     }
 }

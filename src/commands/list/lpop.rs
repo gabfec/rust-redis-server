@@ -21,7 +21,7 @@ impl Command for Lpop {
     }
 
     fn execute(self, ctx: &mut Ctx) -> Result<RespValue, CmdError> {
-        let mut store = ctx.server.store();
+        let mut store = ctx.store();
         let Some(list) = store.get_list_mut(&self.key)? else {
             return Ok(RespValue::NullBulk);
         };

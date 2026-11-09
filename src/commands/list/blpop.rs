@@ -25,7 +25,7 @@ impl Command for Blpop {
     }
 
     fn execute(self, ctx: &mut Ctx) -> Result<RespValue, CmdError> {
-        let popped = ctx.server.wait_for(self.timeout, |store| {
+        let popped = ctx.wait_for(self.timeout, |store| {
             self.keys.iter().find_map(|key| {
                 let list = store.get_list_mut(key).ok()??;
                 let value = list.pop_front()?;

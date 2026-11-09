@@ -20,7 +20,7 @@ impl Command for Xrange {
     }
 
     fn execute(self, ctx: &mut Ctx) -> Result<RespValue, CmdError> {
-        let mut store = ctx.server.store();
+        let mut store = ctx.store();
         let entries = match store.get_stream(&self.key)? {
             Some(stream) => stream.range(self.start, self.end).map(entry_to_resp).collect(),
             None => vec![],

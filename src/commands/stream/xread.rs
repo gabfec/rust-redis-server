@@ -51,7 +51,7 @@ impl Command for Xread {
     fn execute(self, ctx: &mut Ctx) -> Result<RespValue, CmdError> {
         // Resolve `$` to the current last id before waiting.
         let ids: Vec<StreamId> = {
-            let mut store = ctx.server.store();
+            let mut store = ctx.store();
             let mut ids = Vec::with_capacity(self.keys.len());
             for (key, from) in self.keys.iter().zip(&self.ids) {
                 ids.push(match from {
@@ -69,7 +69,7 @@ impl Command for Xread {
             Some(0) => None,              // forever
             Some(ms) => Some(Duration::from_millis(ms)),
         };
-        let result = ctx.server.wait_for(timeout, |store| {
+        let result = ctx.wait_for(timeout, |store| {
             read_streams(store, &self.keys, &ids, self.count).transpose()
         });
         Ok(result.transpose()?.unwrap_or(RespValue::NullArray))

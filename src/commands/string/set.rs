@@ -29,7 +29,7 @@ impl Command for Set {
     }
 
     fn execute(self, ctx: &mut Ctx) -> Result<RespValue, CmdError> {
-        ctx.server.store().set(self.key, Value::String(self.value), self.ttl);
+        ctx.store().set(self.key, Value::String(self.value), self.ttl);
         Ok(RespValue::ok())
     }
 }

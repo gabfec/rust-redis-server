@@ -17,7 +17,7 @@ impl Command for Incr {
     }
 
     fn execute(self, ctx: &mut Ctx) -> Result<RespValue, CmdError> {
-        let mut store = ctx.server.store();
+        let mut store = ctx.store();
         // Update in place so the key keeps its TTL.
         let Some(value) = store.get_string_mut(&self.key)? else {
             // A missing key counts as 0.

@@ -17,7 +17,7 @@ impl Command for Lpush {
     }
 
     fn execute(self, ctx: &mut Ctx) -> Result<RespValue, CmdError> {
-        let mut store = ctx.server.store();
+        let mut store = ctx.store();
         let list = store.list_or_create(self.key)?;
         for value in self.values {
             list.push_front(value);

@@ -1,7 +1,7 @@
 //! One file per command. To add a command:
 //!   1. create `<family>/<name>.rs` with a struct implementing [`Command`],
 //!   2. add `pub mod <name>;` to `<family>/mod.rs`,
-//!   3. add one line to the table in [`dispatch`].
+//!   3. add one line to the table in [`lookup`].
 
 mod connection;
 mod keys;
@@ -11,49 +11,81 @@ mod string;
 mod transaction;
 
 use std::str::FromStr;
+use std::sync::MutexGuard;
+use std::time::Duration;
 
 use crate::connection::ConnState;
 use crate::resp::RespValue;
 use crate::server::ServerState;
-use crate::store::WrongType;
+use crate::store::{Store, WrongType};
 
 pub fn dispatch(mut words: Vec<String>, ctx: &mut Ctx) -> RespValue {
     let name = words.remove(0).to_ascii_lowercase();
-    let args = Args::new(name.clone(), words);
-
-    match name.as_str() {
-        // connection
-        "ping" => run::<connection::ping::Ping>(args, ctx),
-        "echo" => run::<connection::echo::Echo>(args, ctx),
-        // keys
-        "type" => run::<keys::r#type::Type>(args, ctx),
-        // strings
-        "get" => run::<string::get::Get>(args, ctx),
-        "set" => run::<string::set::Set>(args, ctx),
-        "incr" => run::<string::incr::Incr>(args, ctx),
-        // lists
-        "rpush" => run::<list::rpush::Rpush>(args, ctx),
-        "lpush" => run::<list::lpush::Lpush>(args, ctx),
-        "lrange" => run::<list::lrange::Lrange>(args, ctx),
-        "llen" => run::<list::llen::Llen>(args, ctx),
-        "lpop" => run::<list::lpop::Lpop>(args, ctx),
-        "blpop" => run::<list::blpop::Blpop>(args, ctx),
-        // streams
-        "xadd" => run::<stream::xadd::Xadd>(args, ctx),
-        "xrange" => run::<stream::xrange::Xrange>(args, ctx),
-        "xread" => run::<stream::xread::Xread>(args, ctx),
-        // transactions
-        "multi" => run::<transaction::multi::Multi>(args, ctx),
-        "exec" => run::<transaction::exec::Exec>(args, ctx),
-
-        _ => RespValue::Error(format!("ERR unknown command '{name}'")),
+    match lookup(&name) {
+        Some(handler) => handler(Args::new(name, words), ctx),
+        None => RespValue::Error(format!("ERR unknown command '{name}'")),
     }
+}
+
+/// Parses and runs one command.
+pub type Handler = fn(Args, &mut Ctx) -> RespValue;
+
+/// The command table.
+fn lookup(name: &str) -> Option<Handler> {
+    let handler: Handler = match name {
+        // connection
+        "ping" => run::<connection::ping::Ping>,
+        "echo" => run::<connection::echo::Echo>,
+        // keys
+        "type" => run::<keys::r#type::Type>,
+        // strings
+        "get" => run::<string::get::Get>,
+        "set" => run::<string::set::Set>,
+        "incr" => run::<string::incr::Incr>,
+        // lists
+        "rpush" => run::<list::rpush::Rpush>,
+        "lpush" => run::<list::lpush::Lpush>,
+        "lrange" => run::<list::lrange::Lrange>,
+        "llen" => run::<list::llen::Llen>,
+        "lpop" => run::<list::lpop::Lpop>,
+        "blpop" => run::<list::blpop::Blpop>,
+        // streams
+        "xadd" => run::<stream::xadd::Xadd>,
+        "xrange" => run::<stream::xrange::Xrange>,
+        "xread" => run::<stream::xread::Xread>,
+        // transactions
+        "multi" => run::<transaction::multi::Multi>,
+        "exec" => run::<transaction::exec::Exec>,
+
+        _ => return None,
+    };
+    Some(handler)
 }
 
 /// Everything a command may touch while executing.
 pub struct Ctx<'a> {
-    pub server: &'a ServerState,
-    pub conn: &'a mut ConnState,
+    server: &'a ServerState,
+    conn: &'a mut ConnState,
+}
+
+impl<'a> Ctx<'a> {
+    pub fn new(server: &'a ServerState, conn: &'a mut ConnState) -> Self {
+        Ctx { server, conn }
+    }
+
+    /// The keyspace. Commands must go through this (not `ServerState`).
+    pub fn store(&mut self) -> MutexGuard<'_, Store> {
+        self.server.store()
+    }
+
+    /// See [`ServerState::wait_for`].
+    pub fn wait_for<T>(
+        &mut self,
+        timeout: Option<Duration>,
+        check: impl FnMut(&mut Store) -> Option<T>,
+    ) -> Option<T> {
+        self.server.wait_for(timeout, check)
+    }
 }
 
 pub trait Command: Sized {
@@ -174,7 +206,7 @@ pub mod test_util {
     /// several connections/threads (e.g. to test blocking commands).
     pub fn run(server: &ServerState, conn: &mut ConnState, words: &[&str]) -> RespValue {
         let words = words.iter().map(|w| w.to_string()).collect();
-        dispatch(words, &mut Ctx { server, conn })
+        dispatch(words, &mut Ctx::new(server, conn))
     }
 
     pub fn err(msg: &str) -> RespValue {

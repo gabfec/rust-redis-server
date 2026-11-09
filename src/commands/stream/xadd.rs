@@ -38,7 +38,7 @@ impl Command for Xadd {
     }
 
     fn execute(self, ctx: &mut Ctx) -> Result<RespValue, CmdError> {
-        let mut store = ctx.server.store();
+        let mut store = ctx.store();
         let last = store.get_stream(&self.key)?.and_then(Stream::last_id);
         let id = resolve_id(self.id, last);
 

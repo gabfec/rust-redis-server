@@ -14,7 +14,7 @@ impl Command for Type {
     }
 
     fn execute(self, ctx: &mut Ctx) -> Result<RespValue, CmdError> {
-        let mut store = ctx.server.store();
+        let mut store = ctx.store();
         let name = store.get(&self.key).map_or("none", |v| v.type_name());
         Ok(RespValue::Simple(name.into()))
     }

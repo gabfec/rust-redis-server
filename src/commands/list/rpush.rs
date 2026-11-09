@@ -17,7 +17,7 @@ impl Command for Rpush {
     }
 
     fn execute(self, ctx: &mut Ctx) -> Result<RespValue, CmdError> {
-        let mut store = ctx.server.store();
+        let mut store = ctx.store();
         let list = store.list_or_create(self.key)?;
         list.extend(self.values);
         Ok(RespValue::Integer(list.len() as i64))

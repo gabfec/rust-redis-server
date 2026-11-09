@@ -14,7 +14,7 @@ impl Command for Llen {
     }
 
     fn execute(self, ctx: &mut Ctx) -> Result<RespValue, CmdError> {
-        let mut store = ctx.server.store();
+        let mut store = ctx.store();
         let len = store.get_list(&self.key)?.map_or(0, |l| l.len());
         Ok(RespValue::Integer(len as i64))
     }
