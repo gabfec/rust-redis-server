@@ -11,11 +11,13 @@ impl Command for Exec {
     }
 
     fn execute(self, ctx: &mut Ctx) -> Result<RespValue, CmdError> {
-        let Some(_tx) = ctx.conn.transaction.take() else {
+        let Some(tx) = ctx.conn.transaction.take() else {
             return Err(CmdError::Other("ERR EXEC without MULTI".into()));
         };
-        // TODO: run the queued commands. For now they are dropped.
-        Ok(RespValue::Array(vec![]))
+        let replies = ctx.atomically(|ctx| {
+            tx.queued.into_iter().map(|(handler, args)| handler(args, ctx)).collect()
+        });
+        Ok(RespValue::Array(replies))
     }
 }
 
@@ -37,5 +39,31 @@ mod tests {
         assert_eq!(c.cmd(&["EXEC"]), RespValue::Array(vec![]));
         assert!(c.conn.transaction.is_none());
         assert_eq!(c.cmd(&["EXEC"]), RespValue::Error("ERR EXEC without MULTI".into()));
+    }
+
+    #[test]
+    fn exec_runs_queued_commands_in_order() {
+        let mut c = Client::default();
+        c.cmd(&["MULTI"]);
+        c.cmd(&["SET", "foo", "41"]);
+        c.cmd(&["INCR", "foo"]);
+        c.cmd(&["GET", "foo"]);
+        assert_eq!(
+            c.cmd(&["EXEC"]),
+            RespValue::Array(vec![RespValue::ok(), RespValue::Integer(42), RespValue::bulk("42")])
+        );
+        assert_eq!(c.other(&["GET", "foo"]), RespValue::bulk("42"));
+    }
+
+    #[test]
+    fn blocking_commands_do_not_block_inside_exec() {
+        let mut c = Client::default();
+        c.cmd(&["MULTI"]);
+        c.cmd(&["BLPOP", "list", "0"]);
+        c.cmd(&["XREAD", "BLOCK", "0", "STREAMS", "s", "$"]);
+        assert_eq!(
+            c.cmd(&["EXEC"]),
+            RespValue::Array(vec![RespValue::NullArray, RespValue::NullArray])
+        );
     }
 }

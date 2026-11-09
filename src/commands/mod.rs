@@ -12,6 +12,7 @@ mod transaction;
 
 pub use transaction::Transaction;
 
+use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
 use std::sync::MutexGuard;
 use std::time::Duration;
@@ -78,25 +79,67 @@ fn lookup(name: &str) -> Option<Handler> {
 pub struct Ctx<'a> {
     server: &'a ServerState,
     conn: &'a mut ConnState,
+    /// Set while the store is already locked (inside EXEC).
+    held: Option<&'a mut Store>,
 }
 
 impl<'a> Ctx<'a> {
     pub fn new(server: &'a ServerState, conn: &'a mut ConnState) -> Self {
-        Ctx { server, conn }
+        Ctx { server, conn, held: None }
     }
 
     /// The keyspace. Commands must go through this (not `ServerState`).
-    pub fn store(&mut self) -> MutexGuard<'_, Store> {
-        self.server.store()
+    pub fn store(&mut self) -> StoreRef<'_> {
+        match &mut self.held {
+            Some(store) => StoreRef::Held(store),
+            None => StoreRef::Locked(self.server.store()),
+        }
     }
 
-    /// See [`ServerState::wait_for`].
+    /// See [`ServerState::wait_for`]. Inside EXEC this checks once and
+    /// never blocks, like Redis.
     pub fn wait_for<T>(
         &mut self,
         timeout: Option<Duration>,
-        check: impl FnMut(&mut Store) -> Option<T>,
+        mut check: impl FnMut(&mut Store) -> Option<T>,
     ) -> Option<T> {
-        self.server.wait_for(timeout, check)
+        match &mut self.held {
+            Some(store) => check(store),
+            None => self.server.wait_for(timeout, check),
+        }
+    }
+
+    /// Runs `f` with the store locked throughout, so that no other client
+    /// can run a command in between (used by EXEC).
+    pub fn atomically<R>(&mut self, f: impl FnOnce(&mut Ctx) -> R) -> R {
+        assert!(self.held.is_none(), "store is already locked");
+        let mut store = self.server.store();
+        f(&mut Ctx { server: self.server, conn: self.conn, held: Some(&mut store) })
+    }
+}
+
+/// The store, either locked just for this command or already held by EXEC.
+pub enum StoreRef<'a> {
+    Locked(MutexGuard<'a, Store>),
+    Held(&'a mut Store),
+}
+
+impl Deref for StoreRef<'_> {
+    type Target = Store;
+    fn deref(&self) -> &Store {
+        match self {
+            StoreRef::Locked(guard) => guard,
+            StoreRef::Held(store) => store,
+        }
+    }
+}
+
+impl DerefMut for StoreRef<'_> {
+    fn deref_mut(&mut self) -> &mut Store {
+        match self {
+            StoreRef::Locked(guard) => guard,
+            StoreRef::Held(store) => store,
+        }
     }
 }
 
