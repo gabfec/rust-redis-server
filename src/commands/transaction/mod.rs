@@ -8,6 +8,8 @@ use super::{Args, Handler};
 #[derive(Default)]
 pub struct Transaction {
     pub queued: Vec<(Handler, Args)>,
+    /// A command was rejected while queueing: EXEC will refuse to run.
+    pub aborted: bool,
 }
 
 /// Commands that run right away even inside MULTI (instead of being queued).

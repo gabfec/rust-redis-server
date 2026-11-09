@@ -14,6 +14,13 @@ impl Command for Exec {
         let Some(tx) = ctx.conn.transaction.take() else {
             return Err(CmdError::Other("ERR EXEC without MULTI".into()));
         };
+        if tx.aborted {
+            return Err(CmdError::Other(
+                "EXECABORT Transaction discarded because of previous errors.".into(),
+            ));
+        }
+        // A command that fails here only puts its error in the replies;
+        // the others still run (Redis has no rollback).
         let replies = ctx.atomically(|ctx| {
             tx.queued.into_iter().map(|(handler, args)| handler(args, ctx)).collect()
         });
@@ -53,6 +60,38 @@ mod tests {
             RespValue::Array(vec![RespValue::ok(), RespValue::Integer(42), RespValue::bulk("42")])
         );
         assert_eq!(c.other(&["GET", "foo"]), RespValue::bulk("42"));
+    }
+
+    #[test]
+    fn a_failing_command_does_not_stop_the_others() {
+        let mut c = Client::default();
+        c.cmd(&["SET", "foo", "xyz"]);
+        c.cmd(&["MULTI"]);
+        c.cmd(&["INCR", "foo"]);
+        c.cmd(&["SET", "bar", "7"]);
+        c.cmd(&["INCR", "bar"]);
+        assert_eq!(
+            c.cmd(&["EXEC"]),
+            RespValue::Array(vec![
+                RespValue::Error("ERR value is not an integer or out of range".into()),
+                RespValue::ok(),
+                RespValue::Integer(8),
+            ])
+        );
+    }
+
+    #[test]
+    fn unknown_command_aborts_the_transaction() {
+        let mut c = Client::default();
+        c.cmd(&["MULTI"]);
+        assert_eq!(c.cmd(&["NOPE"]), RespValue::Error("ERR unknown command 'nope'".into()));
+        assert_eq!(c.cmd(&["SET", "a", "1"]), RespValue::Simple("QUEUED".into()));
+        assert_eq!(
+            c.cmd(&["EXEC"]),
+            RespValue::Error("EXECABORT Transaction discarded because of previous errors.".into())
+        );
+        assert_eq!(c.cmd(&["GET", "a"]), RespValue::NullBulk);
+        assert!(c.conn.transaction.is_none());
     }
 
     #[test]

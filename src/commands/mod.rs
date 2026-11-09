@@ -25,6 +25,10 @@ use crate::store::{Store, WrongType};
 pub fn dispatch(mut words: Vec<String>, ctx: &mut Ctx) -> RespValue {
     let name = words.remove(0).to_ascii_lowercase();
     let Some(handler) = lookup(&name) else {
+        // Like Redis, an unknown command makes the whole transaction fail.
+        if let Some(tx) = &mut ctx.conn.transaction {
+            tx.aborted = true;
+        }
         return RespValue::Error(format!("ERR unknown command '{name}'"));
     };
     let queue = !transaction::runs_immediately(&name);
