@@ -15,7 +15,7 @@ pub struct Transaction {
 
 /// Commands that run right away even inside MULTI (instead of being queued).
 pub fn runs_immediately(name: &str) -> bool {
-    matches!(name, "multi" | "exec" | "discard")
+    matches!(name, "multi" | "exec" | "discard" | "watch")
 }
 
 #[cfg(test)]

@@ -11,7 +11,10 @@ impl Command for Watch {
         Ok(Watch)
     }
 
-    fn execute(self, _ctx: &mut Ctx) -> Result<RespValue, CmdError> {
+    fn execute(self, ctx: &mut Ctx) -> Result<RespValue, CmdError> {
+        if ctx.conn.transaction.is_some() {
+            return Err(CmdError::Other("ERR WATCH inside MULTI is not allowed".into()));
+        }
         Ok(RespValue::ok())
     }
 }
@@ -27,5 +30,15 @@ mod tests {
         assert_eq!(c.cmd(&["WATCH", "a"]), RespValue::ok());
         assert_eq!(c.cmd(&["WATCH", "a", "b"]), RespValue::ok());
         assert_eq!(c.cmd(&["WATCH"]), err("ERR wrong number of arguments for 'watch' command"));
+    }
+
+    #[test]
+    fn watch_inside_multi_is_an_error() {
+        let mut c = Client::default();
+        c.cmd(&["MULTI"]);
+        assert_eq!(c.cmd(&["WATCH", "a"]), err("ERR WATCH inside MULTI is not allowed"));
+        // The transaction itself carries on.
+        c.cmd(&["SET", "a", "1"]);
+        assert_eq!(c.cmd(&["EXEC"]), RespValue::Array(vec![RespValue::ok()]));
     }
 }
