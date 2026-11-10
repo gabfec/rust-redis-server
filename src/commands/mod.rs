@@ -28,7 +28,7 @@ use crate::store::{Store, WrongType};
 /// command name.
 pub fn dispatch(words: Vec<String>, ctx: &mut Ctx) -> RespValue {
     let name = words[0].to_ascii_lowercase();
-    let Some(handler) = lookup(&name) else {
+    let Some(spec) = lookup(&name) else {
         // Like Redis, an unknown command makes the whole transaction fail.
         if let Some(tx) = &mut ctx.conn.transaction {
             tx.aborted = true;
@@ -40,60 +40,84 @@ pub fn dispatch(words: Vec<String>, ctx: &mut Ctx) -> RespValue {
     if let Some(tx) = &mut ctx.conn.transaction
         && !transaction::runs_immediately(&name)
     {
-        tx.queued.push((handler, words));
+        tx.queued.push((spec, words));
         return RespValue::Simple("QUEUED".into());
     }
-    execute(handler, words, ctx)
+    execute(spec, words, ctx)
 }
 
 /// Runs a command that was already looked up. `words` includes the
 /// command name, as the client sent it.
-pub fn execute(handler: Handler, mut words: Vec<String>, ctx: &mut Ctx) -> RespValue {
-    let name = words.remove(0).to_ascii_lowercase();
-    handler(Args::new(name, words), ctx)
+pub fn execute(spec: Spec, mut words: Vec<String>, ctx: &mut Ctx) -> RespValue {
+    if !spec.propagate {
+        let name = words.remove(0).to_ascii_lowercase();
+        return (spec.run)(Args::new(name, words), ctx);
+    }
+    // Run it and forward it to the replicas under one lock, so replicas
+    // get the writes in exactly the order they happened here.
+    ctx.atomically(|ctx| {
+        let name = words[0].to_ascii_lowercase();
+        let reply = (spec.run)(Args::new(name, words[1..].to_vec()), ctx);
+        if !matches!(reply, RespValue::Error(_)) {
+            ctx.server.replication.propagate(&words);
+        }
+        reply
+    })
 }
 
 /// Parses and runs one command.
 pub type Handler = fn(Args, &mut Ctx) -> RespValue;
 
+/// An entry of the command table.
+#[derive(Clone, Copy)]
+pub struct Spec {
+    run: Handler,
+    /// Forward to replicas when it succeeds.
+    propagate: bool,
+}
+
+fn spec<C: Command>() -> Spec {
+    Spec { run: run::<C>, propagate: C::PROPAGATE }
+}
+
 /// The command table.
-fn lookup(name: &str) -> Option<Handler> {
-    let handler: Handler = match name {
+fn lookup(name: &str) -> Option<Spec> {
+    let spec = match name {
         // connection
-        "ping" => run::<connection::ping::Ping>,
-        "echo" => run::<connection::echo::Echo>,
+        "ping" => spec::<connection::ping::Ping>(),
+        "echo" => spec::<connection::echo::Echo>(),
         // keys
-        "type" => run::<keys::r#type::Type>,
+        "type" => spec::<keys::r#type::Type>(),
         // strings
-        "get" => run::<string::get::Get>,
-        "set" => run::<string::set::Set>,
-        "incr" => run::<string::incr::Incr>,
+        "get" => spec::<string::get::Get>(),
+        "set" => spec::<string::set::Set>(),
+        "incr" => spec::<string::incr::Incr>(),
         // lists
-        "rpush" => run::<list::rpush::Rpush>,
-        "lpush" => run::<list::lpush::Lpush>,
-        "lrange" => run::<list::lrange::Lrange>,
-        "llen" => run::<list::llen::Llen>,
-        "lpop" => run::<list::lpop::Lpop>,
-        "blpop" => run::<list::blpop::Blpop>,
+        "rpush" => spec::<list::rpush::Rpush>(),
+        "lpush" => spec::<list::lpush::Lpush>(),
+        "lrange" => spec::<list::lrange::Lrange>(),
+        "llen" => spec::<list::llen::Llen>(),
+        "lpop" => spec::<list::lpop::Lpop>(),
+        "blpop" => spec::<list::blpop::Blpop>(),
         // streams
-        "xadd" => run::<stream::xadd::Xadd>,
-        "xrange" => run::<stream::xrange::Xrange>,
-        "xread" => run::<stream::xread::Xread>,
+        "xadd" => spec::<stream::xadd::Xadd>(),
+        "xrange" => spec::<stream::xrange::Xrange>(),
+        "xread" => spec::<stream::xread::Xread>(),
         // replication
-        "replconf" => run::<replication::replconf::Replconf>,
-        "psync" => run::<replication::psync::Psync>,
+        "replconf" => spec::<replication::replconf::Replconf>(),
+        "psync" => spec::<replication::psync::Psync>(),
         // server
-        "info" => run::<server::info::Info>,
+        "info" => spec::<server::info::Info>(),
         // transactions
-        "multi" => run::<transaction::multi::Multi>,
-        "exec" => run::<transaction::exec::Exec>,
-        "discard" => run::<transaction::discard::Discard>,
-        "watch" => run::<transaction::watch::Watch>,
-        "unwatch" => run::<transaction::unwatch::Unwatch>,
+        "multi" => spec::<transaction::multi::Multi>(),
+        "exec" => spec::<transaction::exec::Exec>(),
+        "discard" => spec::<transaction::discard::Discard>(),
+        "watch" => spec::<transaction::watch::Watch>(),
+        "unwatch" => spec::<transaction::unwatch::Unwatch>(),
 
         _ => return None,
     };
-    Some(handler)
+    Some(spec)
 }
 
 /// Everything a command may touch while executing.
@@ -132,8 +156,11 @@ impl<'a> Ctx<'a> {
 
     /// Runs `f` with the store locked throughout, so that no other client
     /// can run a command in between (used by EXEC).
+    /// If the store is already locked (inside EXEC), `f` just runs.
     pub fn atomically<R>(&mut self, f: impl FnOnce(&mut Ctx) -> R) -> R {
-        assert!(self.held.is_none(), "store is already locked");
+        if self.held.is_some() {
+            return f(self);
+        }
         let mut store = self.server.store();
         f(&mut Ctx { server: self.server, conn: self.conn, held: Some(&mut store) })
     }
@@ -165,8 +192,10 @@ impl DerefMut for StoreRef<'_> {
 }
 
 pub trait Command: Sized {
-    /// Write commands wake up blocked clients (and, later, get propagated to replicas).
+    /// Write commands wake up blocked clients.
     const IS_WRITE: bool = false;
+    /// Forward the command to replicas (as received) when it succeeds.
+    const PROPAGATE: bool = Self::IS_WRITE;
 
     fn parse(args: Args) -> Result<Self, CmdError>;
     fn execute(self, ctx: &mut Ctx) -> Result<RespValue, CmdError>;

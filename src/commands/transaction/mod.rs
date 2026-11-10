@@ -4,13 +4,13 @@ pub mod multi;
 pub mod unwatch;
 pub mod watch;
 
-use super::Handler;
+use super::Spec;
 
 /// Commands queued between MULTI and EXEC.
 #[derive(Default)]
 pub struct Transaction {
     /// Each command with its words (name included), as received.
-    pub queued: Vec<(Handler, Vec<String>)>,
+    pub queued: Vec<(Spec, Vec<String>)>,
     /// A command was rejected while queueing: EXEC will refuse to run.
     pub aborted: bool,
 }

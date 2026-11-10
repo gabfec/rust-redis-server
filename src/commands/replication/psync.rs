@@ -26,6 +26,8 @@ impl Command for Psync {
         let rdb = rdb::empty();
         write!(out, "${}\r\n", rdb.len()).unwrap();
         out.extend_from_slice(&rdb);
+        // From now on this connection gets every write (see connection.rs).
+        ctx.conn.is_replica = true;
         Ok(RespValue::Raw(out))
     }
 }

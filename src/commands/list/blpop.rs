@@ -11,6 +11,8 @@ pub struct Blpop {
 
 impl Command for Blpop {
     const IS_WRITE: bool = true;
+    // TODO: propagate as LPOP; replaying BLPOP on a replica could block it.
+    const PROPAGATE: bool = false;
 
     fn parse(args: Args) -> Result<Self, CmdError> {
         let mut keys = args.rest_min(2)?;
