@@ -16,6 +16,8 @@ pub struct ConnState {
     pub is_replica: bool,
     /// Its id in `Replication`, once registered.
     pub replica_id: Option<u64>,
+    /// On a replica's link to its master: bytes of commands processed.
+    pub master_offset: u64,
 }
 
 pub fn handle(mut stream: TcpStream, server: &ServerState) -> io::Result<()> {

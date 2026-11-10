@@ -73,8 +73,8 @@ impl MasterLink {
         Ok(reply)
     }
 
-    /// Applies the commands the master forwards, without replying, until
-    /// the connection ends.
+    /// Applies the commands the master forwards until the connection ends.
+    /// Only REPLCONF (GETACK) gets a reply; everything else runs silently.
     fn apply_commands(&mut self, server: &ServerState) -> io::Result<()> {
         let mut conn = ConnState::default();
         loop {
@@ -82,7 +82,13 @@ impl MasterLink {
             let Some(words) = command_words(value.clone()).filter(|w| !w.is_empty()) else {
                 return Err(io::Error::other(format!("bad command from master: {value:?}")));
             };
-            commands::dispatch(words, &mut Ctx::new(server, &mut conn));
+            let wants_reply = words[0].eq_ignore_ascii_case("REPLCONF");
+            let reply = commands::dispatch(words, &mut Ctx::new(server, &mut conn));
+            if wants_reply {
+                let mut out = Vec::new();
+                reply.encode(&mut out);
+                self.stream.write_all(&out)?;
+            }
         }
     }
 
@@ -264,5 +270,12 @@ mod tests {
         master.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
         let mut buf = [0u8; 64];
         assert!(master.read(&mut buf).is_err(), "the replica must not reply");
+    }
+
+    #[test]
+    fn answers_getack() {
+        let (_server, mut master) = replica_of_fake_master(&encode(&[&["REPLCONF", "GETACK", "*"]]));
+        let mut buf = Vec::new();
+        assert_eq!(read_command(&mut master, &mut buf), ["REPLCONF", "ACK", "0"]);
     }
 }
