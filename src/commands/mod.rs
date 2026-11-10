@@ -24,8 +24,10 @@ use crate::resp::RespValue;
 use crate::server::ServerState;
 use crate::store::{Store, WrongType};
 
-pub fn dispatch(mut words: Vec<String>, ctx: &mut Ctx) -> RespValue {
-    let name = words.remove(0).to_ascii_lowercase();
+/// Runs (or, inside MULTI, queues) one command. `words` includes the
+/// command name.
+pub fn dispatch(words: Vec<String>, ctx: &mut Ctx) -> RespValue {
+    let name = words[0].to_ascii_lowercase();
     let Some(handler) = lookup(&name) else {
         // Like Redis, an unknown command makes the whole transaction fail.
         if let Some(tx) = &mut ctx.conn.transaction {
@@ -33,17 +35,22 @@ pub fn dispatch(mut words: Vec<String>, ctx: &mut Ctx) -> RespValue {
         }
         return RespValue::Error(format!("ERR unknown command '{name}'"));
     };
-    let queue = !transaction::runs_immediately(&name);
-    let args = Args::new(name, words);
 
     // Between MULTI and EXEC, commands are queued instead of run.
     if let Some(tx) = &mut ctx.conn.transaction
-        && queue
+        && !transaction::runs_immediately(&name)
     {
-        tx.queued.push((handler, args));
+        tx.queued.push((handler, words));
         return RespValue::Simple("QUEUED".into());
     }
-    handler(args, ctx)
+    execute(handler, words, ctx)
+}
+
+/// Runs a command that was already looked up. `words` includes the
+/// command name, as the client sent it.
+pub fn execute(handler: Handler, mut words: Vec<String>, ctx: &mut Ctx) -> RespValue {
+    let name = words.remove(0).to_ascii_lowercase();
+    handler(Args::new(name, words), ctx)
 }
 
 /// Parses and runs one command.

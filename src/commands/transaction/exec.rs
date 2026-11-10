@@ -1,4 +1,4 @@
-use crate::commands::{Args, CmdError, Command, Ctx};
+use crate::commands::{execute, Args, CmdError, Command, Ctx};
 use crate::resp::RespValue;
 
 /// EXEC
@@ -28,7 +28,7 @@ impl Command for Exec {
             if watched_key_changed(ctx, &watched) {
                 return None;
             }
-            Some(tx.queued.into_iter().map(|(handler, args)| handler(args, ctx)).collect())
+            Some(tx.queued.into_iter().map(|(handler, words)| execute(handler, words, ctx)).collect())
         });
         // A watched key changed: nothing ran, reply with a null array.
         Ok(replies.map_or(RespValue::NullArray, RespValue::Array))
