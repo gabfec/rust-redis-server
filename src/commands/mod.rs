@@ -75,6 +75,7 @@ fn lookup(name: &str) -> Option<Handler> {
         "exec" => run::<transaction::exec::Exec>,
         "discard" => run::<transaction::discard::Discard>,
         "watch" => run::<transaction::watch::Watch>,
+        "unwatch" => run::<transaction::unwatch::Unwatch>,
 
         _ => return None,
     };
