@@ -1,6 +1,7 @@
 pub mod discard;
 pub mod exec;
 pub mod multi;
+pub mod watch;
 
 use super::{Args, Handler};
 
