@@ -49,6 +49,18 @@ mod tests {
     }
 
     #[test]
+    fn replication_id_and_offset() {
+        let mut c = Client::default();
+        let text = info(&mut c, &["replication"]);
+        let replid = text
+            .lines()
+            .find_map(|l| l.strip_prefix("master_replid:"))
+            .expect("master_replid line");
+        assert_eq!(replid.len(), 40);
+        assert!(text.lines().any(|l| l == "master_repl_offset:0"), "{text}");
+    }
+
+    #[test]
     fn replica_reports_slave() {
         let config = Config { replicaof: Some(("localhost".into(), 6379)), ..Config::default() };
         let mut c = Client { server: ServerState::new(&config), ..Client::default() };
