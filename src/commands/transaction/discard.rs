@@ -14,6 +14,7 @@ impl Command for Discard {
         if ctx.conn.transaction.take().is_none() {
             return Err(CmdError::Other("ERR DISCARD without MULTI".into()));
         }
+        ctx.conn.watched.clear();
         Ok(RespValue::ok())
     }
 }
@@ -36,5 +37,17 @@ mod tests {
     #[test]
     fn discard_without_multi() {
         assert_eq!(Client::default().cmd(&["DISCARD"]), err("ERR DISCARD without MULTI"));
+    }
+
+    #[test]
+    fn discard_unwatches_all_keys() {
+        let mut c = Client::default();
+        c.cmd(&["WATCH", "k"]);
+        c.cmd(&["MULTI"]);
+        c.cmd(&["DISCARD"]);
+        c.other(&["SET", "k", "changed"]);
+        c.cmd(&["MULTI"]);
+        c.cmd(&["SET", "k", "tx"]);
+        assert_eq!(c.cmd(&["EXEC"]), RespValue::Array(vec![RespValue::ok()]));
     }
 }
