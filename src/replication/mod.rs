@@ -206,4 +206,39 @@ mod tests {
         c.cmd(&["SET", "a", "1"]);
         assert_eq!(c.server.replication.offset(), 0);
     }
+
+    #[test]
+    fn every_replica_gets_every_write() {
+        let mut c = Client::default();
+        let mut replicas: Vec<_> = (0..3)
+            .map(|_| {
+                let (to_replica, replica) = socket_pair();
+                c.server.replication.add_replica(to_replica, &[]).unwrap();
+                replica
+            })
+            .collect();
+        c.cmd(&["SET", "a", "1"]);
+        c.cmd(&["SET", "b", "2"]);
+        let expected = "*3\r\n$3\r\nSET\r\n$1\r\na\r\n$1\r\n1\r\n\
+                        *3\r\n$3\r\nSET\r\n$1\r\nb\r\n$1\r\n2\r\n";
+        for replica in &mut replicas {
+            assert_eq!(read_available(replica), expected);
+        }
+    }
+
+    #[test]
+    fn a_disconnected_replica_is_dropped() {
+        let mut c = Client::default();
+        let (to_gone, gone) = socket_pair();
+        let (to_alive, mut alive) = socket_pair();
+        c.server.replication.add_replica(to_gone, &[]).unwrap();
+        c.server.replication.add_replica(to_alive, &[]).unwrap();
+        drop(gone);
+        // Writing to a closed socket may only fail on the 2nd attempt.
+        for i in 0..3 {
+            c.cmd(&["SET", "k", &i.to_string()]);
+        }
+        assert_eq!(c.server.replication.replicas().links.len(), 1);
+        assert!(read_available(&mut alive).ends_with("$1\r\n2\r\n"));
+    }
 }
