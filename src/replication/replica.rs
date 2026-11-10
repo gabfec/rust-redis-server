@@ -10,19 +10,23 @@ use crate::resp::{self, RespValue};
 use crate::server::ServerState;
 
 /// If this server is a replica, connects to its master in the background.
-pub fn start(server: Arc<ServerState>) {
+/// `own_port` is the port this server listens on.
+pub fn start(server: Arc<ServerState>, own_port: u16) {
     let Role::Replica { host, port } = server.replication.role.clone() else { return };
     thread::spawn(move || {
-        if let Err(e) = connect(&host, port) {
+        if let Err(e) = connect(&host, port, own_port) {
             eprintln!("replication: {e}");
         }
     });
 }
 
 /// Connects to the master and runs the handshake.
-fn connect(host: &str, port: u16) -> io::Result<MasterLink> {
+fn connect(host: &str, port: u16, own_port: u16) -> io::Result<MasterLink> {
     let mut link = MasterLink { stream: TcpStream::connect((host, port))?, buf: Vec::new() };
+    let ok = |r: &RespValue| *r == RespValue::ok();
     link.expect(&["PING"], |r| *r == RespValue::Simple("PONG".into()))?;
+    link.expect(&["REPLCONF", "listening-port", &own_port.to_string()], ok)?;
+    link.expect(&["REPLCONF", "capa", "psync2"], ok)?;
     Ok(link)
 }
 
@@ -126,17 +130,26 @@ mod tests {
         }
     }
 
+    /// The handshake steps, as (command the replica sends, master's reply).
+    pub fn handshake_script(own_port: &'static str) -> Vec<(Vec<&'static str>, Vec<u8>)> {
+        vec![
+            (vec!["PING"], b"+PONG\r\n".to_vec()),
+            (vec!["REPLCONF", "listening-port", own_port], b"+OK\r\n".to_vec()),
+            (vec!["REPLCONF", "capa", "psync2"], b"+OK\r\n".to_vec()),
+        ]
+    }
+
     #[test]
-    fn handshake_starts_with_ping() {
-        let (port, master) = fake_master(vec![(vec!["PING"], b"+PONG\r\n".to_vec())]);
-        connect("127.0.0.1", port).unwrap();
+    fn handshake() {
+        let (port, master) = fake_master(handshake_script("6380"));
+        connect("127.0.0.1", port, 6380).unwrap();
         master.join().unwrap();
     }
 
     #[test]
     fn handshake_fails_on_unexpected_reply() {
         let (port, master) = fake_master(vec![(vec!["PING"], b"-ERR nope\r\n".to_vec())]);
-        assert!(connect("127.0.0.1", port).is_err());
+        assert!(connect("127.0.0.1", port, 6380).is_err());
         master.join().unwrap();
     }
 }

@@ -23,7 +23,7 @@ fn main() {
     });
     println!("listening on port {}", config.port);
     let server = Arc::new(ServerState::new(&config));
-    replication::replica::start(Arc::clone(&server));
+    replication::replica::start(Arc::clone(&server), config.port);
 
     for stream in listener.incoming() {
         match stream {
