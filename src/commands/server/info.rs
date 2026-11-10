@@ -13,23 +13,23 @@ impl Command for Info {
         Ok(Info { section })
     }
 
-    fn execute(self, _ctx: &mut Ctx) -> Result<RespValue, CmdError> {
+    fn execute(self, ctx: &mut Ctx) -> Result<RespValue, CmdError> {
         let text = match self.section.as_deref() {
-            None | Some("replication" | "all" | "everything" | "default") => replication(),
+            None | Some("replication" | "all" | "everything" | "default") => {
+                ctx.server.replication.info()
+            }
             Some(_) => String::new(),
         };
         Ok(RespValue::bulk(text))
     }
 }
 
-fn replication() -> String {
-    ["# Replication", "role:master"].join("\r\n")
-}
-
 #[cfg(test)]
 mod tests {
     use crate::commands::test_util::Client;
+    use crate::config::Config;
     use crate::resp::RespValue;
+    use crate::server::ServerState;
 
     fn info(c: &mut Client, args: &[&str]) -> String {
         let words: Vec<&str> = ["INFO"].iter().chain(args).copied().collect();
@@ -46,5 +46,14 @@ mod tests {
         assert!(info(&mut c, &["REPLICATION"]).contains("role:master"));
         assert!(info(&mut c, &[]).contains("role:master"));
         assert_eq!(info(&mut c, &["keyspace"]), "");
+    }
+
+    #[test]
+    fn replica_reports_slave() {
+        let config = Config { replicaof: Some(("localhost".into(), 6379)), ..Config::default() };
+        let mut c = Client { server: ServerState::new(&config), ..Client::default() };
+        let text = info(&mut c, &["replication"]);
+        assert!(text.contains("role:slave"), "{text}");
+        assert!(!text.contains("role:master"));
     }
 }

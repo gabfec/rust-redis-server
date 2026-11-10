@@ -1,6 +1,8 @@
 use std::sync::{Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+use crate::config::Config;
+use crate::replication::Replication;
 use crate::store::Store;
 
 /// State shared by every connection.
@@ -9,11 +11,12 @@ pub struct ServerState {
     store: Mutex<Store>,
     /// Signalled after every write command, so blocking commands re-check.
     changed: Condvar,
+    pub replication: Replication,
 }
 
 impl ServerState {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(config: &Config) -> Self {
+        ServerState { replication: Replication::new(config), ..Default::default() }
     }
 
     pub fn store(&self) -> MutexGuard<'_, Store> {

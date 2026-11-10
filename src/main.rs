@@ -1,6 +1,7 @@
 mod commands;
 mod config;
 mod connection;
+mod replication;
 mod resp;
 mod server;
 mod store;
@@ -21,7 +22,7 @@ fn main() {
         std::process::exit(1);
     });
     println!("listening on port {}", config.port);
-    let server = Arc::new(ServerState::new());
+    let server = Arc::new(ServerState::new(&config));
 
     for stream in listener.incoming() {
         match stream {
