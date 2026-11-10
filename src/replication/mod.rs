@@ -123,7 +123,8 @@ impl Replication {
         let deadline = timeout.map(|t| Instant::now() + t);
         let mut replicas = self.replicas();
         let target = replicas.offset;
-        if replicas.acked_at_least(target) >= wanted {
+        // Nothing written yet: every replica is in sync, whatever was asked.
+        if target == 0 || replicas.acked_at_least(target) >= wanted {
             return replicas.acked_at_least(target);
         }
         // Ask everyone how far they got; answers arrive via record_ack().

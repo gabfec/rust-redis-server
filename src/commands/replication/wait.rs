@@ -30,7 +30,7 @@ impl Command for Wait {
 #[cfg(test)]
 mod tests {
     use crate::commands::test_util::{err, Client};
-    use crate::replication::test_util::socket_pair;
+    use crate::replication::test_util::{read_available, socket_pair};
     use crate::resp::RespValue;
 
     #[test]
@@ -43,14 +43,22 @@ mod tests {
     #[test]
     fn no_commands_means_every_replica_is_in_sync() {
         let mut c = Client::default();
-        let _replicas: Vec<_> = (0..3)
+        let mut replicas: Vec<_> = (0..7)
             .map(|_| {
                 let (to_replica, replica) = socket_pair();
                 c.server.replication.add_replica(to_replica, &[]).unwrap();
                 replica
             })
             .collect();
-        assert_eq!(c.cmd(&["WAIT", "1", "500"]), RespValue::Integer(3));
-        assert_eq!(c.cmd(&["WAIT", "3", "500"]), RespValue::Integer(3));
+        // Fewer, as many, or more than connected: always the connected
+        // count, right away, without asking the replicas anything.
+        let start = std::time::Instant::now();
+        for wanted in ["3", "7", "9"] {
+            assert_eq!(c.cmd(&["WAIT", wanted, "500"]), RespValue::Integer(7), "WAIT {wanted}");
+        }
+        assert!(start.elapsed() < std::time::Duration::from_millis(500));
+        for replica in &mut replicas {
+            assert_eq!(read_available(replica), "", "no GETACK was sent");
+        }
     }
 }
