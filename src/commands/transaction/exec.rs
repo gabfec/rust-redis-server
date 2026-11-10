@@ -14,6 +14,8 @@ impl Command for Exec {
         let Some(tx) = ctx.conn.transaction.take() else {
             return Err(CmdError::Other("ERR EXEC without MULTI".into()));
         };
+        // EXEC always ends the WATCH, whatever the outcome.
+        let watched = std::mem::take(&mut ctx.conn.watched);
         if tx.aborted {
             return Err(CmdError::Other(
                 "EXECABORT Transaction discarded because of previous errors.".into(),
@@ -23,7 +25,7 @@ impl Command for Exec {
         // the others still run (Redis has no rollback).
         let replies = ctx.atomically(|ctx| {
             // Checked under the same lock, so nothing can change in between.
-            if watched_key_changed(ctx) {
+            if watched_key_changed(ctx, &watched) {
                 return None;
             }
             Some(tx.queued.into_iter().map(|(handler, args)| handler(args, ctx)).collect())
@@ -33,8 +35,7 @@ impl Command for Exec {
     }
 }
 
-fn watched_key_changed(ctx: &mut Ctx) -> bool {
-    let watched = ctx.conn.watched.clone();
+fn watched_key_changed(ctx: &mut Ctx, watched: &[(String, u64)]) -> bool {
     let mut store = ctx.store();
     watched.iter().any(|(key, version)| store.version(key) != *version)
 }
@@ -115,5 +116,25 @@ mod tests {
             c.cmd(&["EXEC"]),
             RespValue::Array(vec![RespValue::NullArray, RespValue::NullArray])
         );
+    }
+
+    #[test]
+    fn exec_unwatches_all_keys() {
+        let mut c = Client::default();
+        for first_exec_succeeds in [true, false] {
+            c.cmd(&["WATCH", "k"]);
+            if !first_exec_succeeds {
+                c.other(&["SET", "k", "changed"]);
+            }
+            c.cmd(&["MULTI"]);
+            c.cmd(&["SET", "k", "first"]);
+            c.cmd(&["EXEC"]);
+
+            // k changes after EXEC: the next transaction must not care.
+            c.other(&["SET", "k", "changed again"]);
+            c.cmd(&["MULTI"]);
+            c.cmd(&["SET", "k", "second"]);
+            assert_eq!(c.cmd(&["EXEC"]), RespValue::Array(vec![RespValue::ok()]));
+        }
     }
 }
