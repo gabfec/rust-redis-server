@@ -91,6 +91,10 @@ impl Replication {
         replicas.links.retain_mut(|link| link.stream.write_all(&out).is_ok());
     }
 
+    pub fn replica_count(&self) -> usize {
+        self.replicas().links.len()
+    }
+
     /// master_repl_offset: how many bytes of commands were propagated.
     pub fn offset(&self) -> u64 {
         self.replicas().offset
