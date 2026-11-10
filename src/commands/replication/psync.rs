@@ -1,9 +1,13 @@
+use std::io::Write;
+
 use crate::commands::{Args, CmdError, Command, Ctx};
+use crate::replication::rdb;
 use crate::resp::RespValue;
 
 /// PSYNC <replid> <offset>
 /// Last step of a replica's handshake. We always answer with a full
-/// resync: FULLRESYNC <our replid> <our offset>.
+/// resync: FULLRESYNC <our replid> <our offset>, followed by a snapshot
+/// of our data as an RDB file (`$<len>\r\n<bytes>`, no trailing CRLF).
 pub struct Psync;
 
 impl Command for Psync {
@@ -16,22 +20,31 @@ impl Command for Psync {
 
     fn execute(self, ctx: &mut Ctx) -> Result<RespValue, CmdError> {
         let replid = &ctx.server.replication.replid;
-        Ok(RespValue::Simple(format!("FULLRESYNC {replid} 0")))
+        let mut out = Vec::new();
+        RespValue::Simple(format!("FULLRESYNC {replid} 0")).encode(&mut out);
+        // TODO: send the real data once there is RDB persistence.
+        let rdb = rdb::empty();
+        write!(out, "${}\r\n", rdb.len()).unwrap();
+        out.extend_from_slice(&rdb);
+        Ok(RespValue::Raw(out))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::commands::test_util::Client;
+    use crate::replication::rdb;
     use crate::resp::RespValue;
 
     #[test]
-    fn replies_fullresync_with_our_replid() {
+    fn replies_fullresync_then_the_rdb_file() {
         let mut c = Client::default();
         let replid = c.server.replication.replid.clone();
-        assert_eq!(
-            c.cmd(&["PSYNC", "?", "-1"]),
-            RespValue::Simple(format!("FULLRESYNC {replid} 0"))
-        );
+        let RespValue::Raw(reply) = c.cmd(&["PSYNC", "?", "-1"]) else { panic!() };
+
+        let rdb = rdb::empty();
+        let mut expected = format!("+FULLRESYNC {replid} 0\r\n${}\r\n", rdb.len()).into_bytes();
+        expected.extend_from_slice(&rdb);
+        assert_eq!(reply, expected);
     }
 }

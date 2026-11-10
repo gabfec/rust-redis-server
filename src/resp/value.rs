@@ -9,6 +9,8 @@ pub enum RespValue {
     NullBulk,
     Array(Vec<RespValue>),
     NullArray,
+    /// Bytes sent exactly as they are, e.g. an RDB file (not valid RESP).
+    Raw(Vec<u8>),
 }
 
 impl RespValue {
@@ -33,6 +35,10 @@ impl RespValue {
             RespValue::Bulk(s) => write!(out, "${}\r\n{s}\r\n", s.len()),
             RespValue::NullBulk => write!(out, "$-1\r\n"),
             RespValue::NullArray => write!(out, "*-1\r\n"),
+            RespValue::Raw(bytes) => {
+                out.extend_from_slice(bytes);
+                Ok(())
+            }
             RespValue::Array(items) => {
                 let _ = write!(out, "*{}\r\n", items.len());
                 items.iter().for_each(|item| item.encode(out));
