@@ -1,4 +1,5 @@
 mod commands;
+mod config;
 mod connection;
 mod resp;
 mod server;
@@ -7,10 +8,19 @@ mod store;
 use std::net::TcpListener;
 use std::sync::Arc;
 
+use config::Config;
 use server::ServerState;
 
 fn main() {
-    let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
+    let config = Config::from_args(std::env::args().skip(1)).unwrap_or_else(|e| {
+        eprintln!("error: {e}");
+        std::process::exit(1);
+    });
+    let listener = TcpListener::bind(("127.0.0.1", config.port)).unwrap_or_else(|e| {
+        eprintln!("error: cannot listen on port {}: {e}", config.port);
+        std::process::exit(1);
+    });
+    println!("listening on port {}", config.port);
     let server = Arc::new(ServerState::new());
 
     for stream in listener.incoming() {
