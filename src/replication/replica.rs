@@ -78,7 +78,7 @@ impl MasterLink {
     fn apply_commands(&mut self, server: &ServerState) -> io::Result<()> {
         let mut conn = ConnState::default();
         loop {
-            let value = self.read_value()?;
+            let (value, len) = self.read_value_with_len()?;
             let Some(words) = command_words(value.clone()).filter(|w| !w.is_empty()) else {
                 return Err(io::Error::other(format!("bad command from master: {value:?}")));
             };
@@ -89,6 +89,8 @@ impl MasterLink {
                 reply.encode(&mut out);
                 self.stream.write_all(&out)?;
             }
+            // Counted after running it: GETACK reports the offset before itself.
+            conn.master_offset += len as u64;
         }
     }
 
@@ -113,11 +115,16 @@ impl MasterLink {
     }
 
     fn read_value(&mut self) -> io::Result<RespValue> {
+        Ok(self.read_value_with_len()?.0)
+    }
+
+    /// The next value, and how many bytes it took.
+    fn read_value_with_len(&mut self) -> io::Result<(RespValue, usize)> {
         loop {
             match resp::parse(&self.buf) {
                 Ok(Some((value, used))) => {
                     self.buf.drain(..used);
-                    return Ok(value);
+                    return Ok((value, used));
                 }
                 Ok(None) => self.fill()?,
                 Err(e) => return Err(io::Error::other(e.to_string())),
@@ -277,5 +284,20 @@ mod tests {
         let (_server, mut master) = replica_of_fake_master(&encode(&[&["REPLCONF", "GETACK", "*"]]));
         let mut buf = Vec::new();
         assert_eq!(read_command(&mut master, &mut buf), ["REPLCONF", "ACK", "0"]);
+    }
+
+    #[test]
+    fn ack_offset_counts_the_bytes_of_processed_commands() {
+        let getack: &[&str] = &["REPLCONF", "GETACK", "*"];
+        let (_server, mut master) = replica_of_fake_master(&encode(&[getack]));
+        let mut buf = Vec::new();
+        assert_eq!(read_command(&mut master, &mut buf), ["REPLCONF", "ACK", "0"]);
+
+        let commands = encode(&[&["PING"], &["SET", "foo", "1"], &["SET", "bar", "2"]]);
+        master.write_all(&commands).unwrap();
+        master.write_all(&encode(&[getack])).unwrap();
+        // Includes the first GETACK, but not the one being answered.
+        let expected = encode(&[getack]).len() + commands.len();
+        assert_eq!(read_command(&mut master, &mut buf), ["REPLCONF", "ACK", &expected.to_string()]);
     }
 }
