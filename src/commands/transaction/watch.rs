@@ -120,4 +120,26 @@ mod tests {
             assert_eq!(c.cmd(&["GET", "result"]), RespValue::NullBulk);
         }
     }
+
+    #[test]
+    fn watching_a_missing_key() {
+        let mut c = Client::default();
+        watched_transaction(&mut c, "missing");
+        c.other(&["SET", "missing", "now it exists"]);
+        assert_eq!(c.cmd(&["EXEC"]), RespValue::NullArray);
+
+        // Still missing at EXEC: not a change.
+        let mut c = Client::default();
+        watched_transaction(&mut c, "missing");
+        assert_eq!(c.cmd(&["EXEC"]), RespValue::Array(vec![RespValue::ok()]));
+    }
+
+    #[test]
+    fn watched_key_expiring_counts_as_a_change() {
+        let mut c = Client::default();
+        c.cmd(&["SET", "k", "v", "PX", "30"]);
+        watched_transaction(&mut c, "k");
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        assert_eq!(c.cmd(&["EXEC"]), RespValue::NullArray);
+    }
 }
