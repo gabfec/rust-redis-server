@@ -27,6 +27,10 @@ fn connect(host: &str, port: u16, own_port: u16) -> io::Result<MasterLink> {
     link.expect(&["PING"], |r| *r == RespValue::Simple("PONG".into()))?;
     link.expect(&["REPLCONF", "listening-port", &own_port.to_string()], ok)?;
     link.expect(&["REPLCONF", "capa", "psync2"], ok)?;
+    // "?" and -1: we have no data yet, so ask for a full copy.
+    link.expect(&["PSYNC", "?", "-1"], |r| {
+        matches!(r, RespValue::Simple(s) if s.starts_with("FULLRESYNC "))
+    })?;
     Ok(link)
 }
 
@@ -136,6 +140,7 @@ mod tests {
             (vec!["PING"], b"+PONG\r\n".to_vec()),
             (vec!["REPLCONF", "listening-port", own_port], b"+OK\r\n".to_vec()),
             (vec!["REPLCONF", "capa", "psync2"], b"+OK\r\n".to_vec()),
+            (vec!["PSYNC", "?", "-1"], format!("+FULLRESYNC {} 0\r\n", "a".repeat(40)).into()),
         ]
     }
 
