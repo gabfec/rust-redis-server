@@ -74,6 +74,7 @@ fn lookup(name: &str) -> Option<Handler> {
         "xread" => run::<stream::xread::Xread>,
         // replication
         "replconf" => run::<replication::replconf::Replconf>,
+        "psync" => run::<replication::psync::Psync>,
         // server
         "info" => run::<server::info::Info>,
         // transactions
