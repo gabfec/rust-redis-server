@@ -106,6 +106,7 @@ fn lookup(name: &str) -> Option<Spec> {
         // replication
         "replconf" => spec::<replication::replconf::Replconf>(),
         "psync" => spec::<replication::psync::Psync>(),
+        "wait" => spec::<replication::wait::Wait>(),
         // server
         "info" => spec::<server::info::Info>(),
         // transactions
