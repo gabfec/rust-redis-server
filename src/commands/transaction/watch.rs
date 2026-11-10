@@ -106,4 +106,18 @@ mod tests {
         assert_eq!(c.cmd(&["EXEC"]), RespValue::NullArray);
         assert_eq!(c.cmd(&["GET", "k"]), RespValue::bulk("mine"));
     }
+
+    #[test]
+    fn watching_multiple_keys() {
+        for changed in ["a", "b", "c"] {
+            let mut c = Client::default();
+            c.cmd(&["WATCH", "a", "b"]);
+            c.cmd(&["WATCH", "c"]); // adds to the watched keys
+            c.other(&["SET", changed, "x"]);
+            c.cmd(&["MULTI"]);
+            c.cmd(&["SET", "result", "ran"]);
+            assert_eq!(c.cmd(&["EXEC"]), RespValue::NullArray, "{changed} changed");
+            assert_eq!(c.cmd(&["GET", "result"]), RespValue::NullBulk);
+        }
+    }
 }
