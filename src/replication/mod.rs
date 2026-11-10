@@ -7,7 +7,8 @@ use std::collections::hash_map::RandomState;
 use std::hash::BuildHasher;
 use std::io::{self, Write};
 use std::net::TcpStream;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Condvar, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use crate::config::Config;
 use crate::resp::RespValue;
@@ -27,6 +28,8 @@ pub struct Replication {
     pub replid: String,
     /// Master side: who to forward writes to.
     replicas: Mutex<Replicas>,
+    /// Signalled when a replica acknowledges an offset (for WAIT).
+    acked: Condvar,
 }
 
 #[derive(Default)]
@@ -40,6 +43,23 @@ struct Replicas {
 struct ReplicaLink {
     id: u64,
     stream: TcpStream,
+    /// Last offset the replica said it has processed (REPLCONF ACK).
+    acked: u64,
+}
+
+impl Replicas {
+    /// Sends a command to every replica and advances the offset.
+    fn send(&mut self, words: &[&str]) {
+        let mut out = Vec::new();
+        RespValue::bulk_array(words.iter().copied()).encode(&mut out);
+        self.offset += out.len() as u64;
+        // A replica we can't write to is gone.
+        self.links.retain_mut(|link| link.stream.write_all(&out).is_ok());
+    }
+
+    fn acked_at_least(&self, offset: u64) -> usize {
+        self.links.iter().filter(|link| link.acked >= offset).count()
+    }
 }
 
 impl Default for Replication {
@@ -54,7 +74,7 @@ impl Replication {
             None => Role::Master,
             Some((host, port)) => Role::Replica { host: host.clone(), port: *port },
         };
-        Replication { role, replid: random_replid(), replicas: Mutex::default() }
+        Replication { role, replid: random_replid(), replicas: Mutex::default(), acked: Condvar::new() }
     }
 
     fn replicas(&self) -> MutexGuard<'_, Replicas> {
@@ -70,7 +90,7 @@ impl Replication {
         stream.write_all(first)?;
         let id = replicas.next_id;
         replicas.next_id += 1;
-        replicas.links.push(ReplicaLink { id, stream });
+        replicas.links.push(ReplicaLink { id, stream, acked: 0 });
         Ok(id)
     }
 
@@ -84,15 +104,46 @@ impl Replication {
         if replicas.links.is_empty() {
             return;
         }
-        let mut out = Vec::new();
-        RespValue::bulk_array(words.iter().cloned()).encode(&mut out);
-        replicas.offset += out.len() as u64;
-        // A replica we can't write to is gone.
-        replicas.links.retain_mut(|link| link.stream.write_all(&out).is_ok());
+        let words: Vec<&str> = words.iter().map(String::as_str).collect();
+        replicas.send(&words);
     }
 
-    pub fn replica_count(&self) -> usize {
-        self.replicas().links.len()
+    /// A replica's REPLCONF ACK: it has processed `offset` bytes.
+    pub fn record_ack(&self, id: u64, offset: u64) {
+        let mut replicas = self.replicas();
+        if let Some(link) = replicas.links.iter_mut().find(|link| link.id == id) {
+            link.acked = offset;
+            self.acked.notify_all();
+        }
+    }
+
+    /// WAIT: waits until `wanted` replicas have processed every write sent
+    /// so far, or until `timeout` (`None`: forever). Returns how many have.
+    pub fn wait_for_acks(&self, wanted: usize, timeout: Option<Duration>) -> usize {
+        let deadline = timeout.map(|t| Instant::now() + t);
+        let mut replicas = self.replicas();
+        let target = replicas.offset;
+        if replicas.acked_at_least(target) >= wanted {
+            return replicas.acked_at_least(target);
+        }
+        // Ask everyone how far they got; answers arrive via record_ack().
+        replicas.send(&["REPLCONF", "GETACK", "*"]);
+        loop {
+            let count = replicas.acked_at_least(target);
+            if count >= wanted {
+                return count;
+            }
+            replicas = match deadline {
+                None => self.acked.wait(replicas).unwrap(),
+                Some(deadline) => {
+                    let now = Instant::now();
+                    if now >= deadline {
+                        return count;
+                    }
+                    self.acked.wait_timeout(replicas, deadline - now).unwrap().0
+                }
+            };
+        }
     }
 
     /// master_repl_offset: how many bytes of commands were propagated.
@@ -138,6 +189,26 @@ pub mod test_util {
         let a = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
         let (b, _) = listener.accept().unwrap();
         (a, b)
+    }
+
+    /// Reads one command (an array of bulk strings) and its size in bytes.
+    pub fn read_command_with_len(stream: &mut TcpStream, buf: &mut Vec<u8>) -> (Vec<String>, usize) {
+        loop {
+            if let Some((value, used)) = crate::resp::parse(buf).unwrap() {
+                buf.drain(..used);
+                let words = crate::connection::command_words(value.clone())
+                    .unwrap_or_else(|| panic!("not a command: {value:?}"));
+                return (words, used);
+            }
+            let mut chunk = [0u8; 4096];
+            let n = stream.read(&mut chunk).unwrap();
+            assert!(n > 0, "connection closed");
+            buf.extend_from_slice(&chunk[..n]);
+        }
+    }
+
+    pub fn read_command(stream: &mut TcpStream, buf: &mut Vec<u8>) -> Vec<String> {
+        read_command_with_len(stream, buf).0
     }
 
     /// Everything that arrives on `stream` within ~100 ms.

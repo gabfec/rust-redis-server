@@ -5,6 +5,7 @@ use crate::resp::RespValue;
 /// - From a replica during the handshake (listening-port, capa): OK.
 /// - From the master, `GETACK *`: the replica answers
 ///   `REPLCONF ACK <bytes of commands processed>`.
+/// - That `ACK <offset>`, on the master: recorded for WAIT, no reply.
 pub struct Replconf {
     options: Vec<(String, String)>,
 }
@@ -24,6 +25,13 @@ impl Command for Replconf {
         if self.options.iter().any(|(option, _)| option == "getack") {
             let offset = ctx.conn.master_offset.to_string();
             return Ok(RespValue::bulk_array(["REPLCONF", "ACK", &offset]));
+        }
+        if let Some((_, offset)) = self.options.iter().find(|(option, _)| option == "ack") {
+            let offset = offset.parse().map_err(|_| CmdError::NotInteger)?;
+            if let Some(id) = ctx.conn.replica_id {
+                ctx.server.replication.record_ack(id, offset);
+            }
+            return Ok(RespValue::Raw(vec![])); // nothing is sent back
         }
         Ok(RespValue::ok())
     }

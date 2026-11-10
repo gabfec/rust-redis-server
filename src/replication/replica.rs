@@ -154,8 +154,9 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{connect, run};
+    use crate::replication::test_util::read_command;
     use crate::replication::rdb;
-    use crate::resp::{self, RespValue};
+    use crate::resp::RespValue;
     use crate::server::ServerState;
 
     /// A fake master that expects `script`'s commands in order and sends
@@ -174,26 +175,6 @@ mod tests {
             stream
         });
         (port, handle)
-    }
-
-    pub fn read_command(stream: &mut TcpStream, buf: &mut Vec<u8>) -> Vec<String> {
-        loop {
-            if let Some((value, used)) = resp::parse(buf).unwrap() {
-                buf.drain(..used);
-                let RespValue::Array(items) = value else { panic!("{value:?}") };
-                return items
-                    .into_iter()
-                    .map(|i| match i {
-                        RespValue::Bulk(s) => s,
-                        other => panic!("{other:?}"),
-                    })
-                    .collect();
-            }
-            let mut chunk = [0u8; 4096];
-            let n = stream.read(&mut chunk).unwrap();
-            assert!(n > 0, "replica closed the connection");
-            buf.extend_from_slice(&chunk[..n]);
-        }
     }
 
     /// The handshake steps, as (command the replica sends, master's reply).

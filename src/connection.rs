@@ -92,8 +92,10 @@ mod tests {
     use std::sync::Arc;
     use std::thread;
 
+    use std::time::{Duration, Instant};
+
     use crate::replication::rdb;
-    use crate::replication::test_util::read_available;
+    use crate::replication::test_util::{read_available, read_command_with_len};
     use crate::resp::RespValue;
     use crate::server::ServerState;
 
@@ -143,5 +145,71 @@ mod tests {
             read_available(&mut replica),
             "*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n"
         );
+    }
+
+    /// Connects as a replica: PSYNC, then reads the reply and the RDB file.
+    fn fake_replica(port: u16, server: &ServerState) -> TcpStream {
+        let mut replica = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        send(&mut replica, &["PSYNC", "?", "-1"]);
+        let len = format!("+FULLRESYNC {} 0\r\n$88\r\n", server.replication.replid).len() + 88;
+        replica.read_exact(&mut vec![0u8; len]).unwrap();
+        replica
+    }
+
+    /// Answers every GETACK with the true offset. Panics (stopping the
+    /// ACKs) if the master sends anything that isn't a command.
+    fn ack_forever(mut replica: TcpStream) {
+        thread::spawn(move || {
+            let (mut buf, mut offset) = (Vec::new(), 0);
+            loop {
+                let (words, len) = read_command_with_len(&mut replica, &mut buf);
+                if words[..2] == ["REPLCONF", "GETACK"] {
+                    send(&mut replica, &["REPLCONF", "ACK", &offset.to_string()]);
+                }
+                offset += len;
+            }
+        });
+    }
+
+    /// One reply line, waiting up to 5 s.
+    fn read_line(stream: &mut TcpStream) -> String {
+        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut line = Vec::new();
+        let mut byte = [0u8];
+        while !line.ends_with(b"\r\n") {
+            stream.read_exact(&mut byte).unwrap();
+            line.push(byte[0]);
+        }
+        String::from_utf8(line).unwrap()
+    }
+
+    #[test]
+    fn wait_counts_replicas_that_acknowledged_the_writes() {
+        let (port, server) = start_server();
+        ack_forever(fake_replica(port, &server));
+        ack_forever(fake_replica(port, &server));
+        let _silent = fake_replica(port, &server);
+        let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+
+        // Nothing written yet: every replica is up to date.
+        send(&mut client, &["WAIT", "3", "500"]);
+        assert_eq!(read_line(&mut client), ":3\r\n");
+
+        send(&mut client, &["SET", "a", "1"]);
+        send(&mut client, &["SET", "b", "2"]);
+        assert_eq!(read_line(&mut client), "+OK\r\n");
+        assert_eq!(read_line(&mut client), "+OK\r\n");
+
+        // Two replicas acknowledge: no need to wait for the timeout.
+        let start = Instant::now();
+        send(&mut client, &["WAIT", "2", "5000"]);
+        assert_eq!(read_line(&mut client), ":2\r\n");
+        assert!(start.elapsed() < Duration::from_secs(1));
+
+        // A third never does: wait for the timeout, then report two.
+        let start = Instant::now();
+        send(&mut client, &["WAIT", "3", "300"]);
+        assert_eq!(read_line(&mut client), ":2\r\n");
+        assert!(start.elapsed() >= Duration::from_millis(300));
     }
 }

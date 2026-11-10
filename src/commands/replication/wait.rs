@@ -1,23 +1,29 @@
+use std::time::Duration;
+
 use crate::commands::{Args, CmdError, Command, Ctx};
 use crate::resp::RespValue;
 
 /// WAIT numreplicas timeout
 /// Waits until `numreplicas` replicas have processed every write sent so
 /// far, or `timeout` ms. Returns how many replicas got that far.
-pub struct Wait;
+pub struct Wait {
+    numreplicas: usize,
+    /// 0 waits forever.
+    timeout_ms: u64,
+}
 
 impl Command for Wait {
     fn parse(mut args: Args) -> Result<Self, CmdError> {
-        let _numreplicas: usize = args.next_parse()?;
-        let _timeout_ms: u64 = args.next_parse()?;
+        let numreplicas = args.next_parse()?;
+        let timeout_ms = args.next_parse()?;
         args.finish()?;
-        Ok(Wait)
+        Ok(Wait { numreplicas, timeout_ms })
     }
 
     fn execute(self, ctx: &mut Ctx) -> Result<RespValue, CmdError> {
-        // TODO: ask the replicas how far they got. For now, assume that
-        // nothing was written, so every replica is up to date.
-        Ok(RespValue::Integer(ctx.server.replication.replica_count() as i64))
+        let timeout = (self.timeout_ms > 0).then(|| Duration::from_millis(self.timeout_ms));
+        let count = ctx.server.replication.wait_for_acks(self.numreplicas, timeout);
+        Ok(RespValue::Integer(count as i64))
     }
 }
 
