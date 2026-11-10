@@ -6,6 +6,7 @@
 mod connection;
 mod keys;
 mod list;
+mod replication;
 mod server;
 mod stream;
 mod string;
@@ -71,6 +72,8 @@ fn lookup(name: &str) -> Option<Handler> {
         "xadd" => run::<stream::xadd::Xadd>,
         "xrange" => run::<stream::xrange::Xrange>,
         "xread" => run::<stream::xread::Xread>,
+        // replication
+        "replconf" => run::<replication::replconf::Replconf>,
         // server
         "info" => run::<server::info::Info>,
         // transactions
