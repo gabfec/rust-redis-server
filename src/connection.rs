@@ -61,18 +61,22 @@ pub fn handle(mut stream: TcpStream, server: &ServerState) -> io::Result<()> {
     }
 }
 
-fn execute(value: RespValue, server: &ServerState, conn: &mut ConnState) -> Option<RespValue> {
-    let words = match value {
+/// A command as sent by a client: an array of strings.
+pub fn command_words(value: RespValue) -> Option<Vec<String>> {
+    match value {
         RespValue::Array(items) => items
             .into_iter()
             .map(|item| match item {
                 RespValue::Bulk(s) | RespValue::Simple(s) => Some(s),
                 _ => None,
             })
-            .collect::<Option<Vec<String>>>(),
+            .collect(),
         _ => None,
-    };
-    match words {
+    }
+}
+
+fn execute(value: RespValue, server: &ServerState, conn: &mut ConnState) -> Option<RespValue> {
+    match command_words(value) {
         Some(words) if words.is_empty() => None,
         Some(words) => Some(commands::dispatch(words, &mut Ctx::new(server, conn))),
         None => Some(RespValue::Error("ERR Protocol error: expected an array of bulk strings".into())),

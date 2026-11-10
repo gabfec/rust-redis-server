@@ -1,4 +1,5 @@
-//! The replica side: connect to the master and do the handshake.
+//! The replica side: connect to the master, do the handshake, then apply
+//! every command the master forwards.
 
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
@@ -6,6 +7,8 @@ use std::sync::Arc;
 use std::thread;
 
 use super::Role;
+use crate::commands::{self, Ctx};
+use crate::connection::{command_words, ConnState};
 use crate::resp::{self, RespValue};
 use crate::server::ServerState;
 
@@ -14,10 +17,18 @@ use crate::server::ServerState;
 pub fn start(server: Arc<ServerState>, own_port: u16) {
     let Role::Replica { host, port } = server.replication.role.clone() else { return };
     thread::spawn(move || {
-        if let Err(e) = connect(&host, port, own_port) {
+        if let Err(e) = run(&server, &host, port, own_port) {
             eprintln!("replication: {e}");
         }
     });
+}
+
+fn run(server: &ServerState, host: &str, port: u16, own_port: u16) -> io::Result<()> {
+    let mut link = connect(host, port, own_port)?;
+    // TODO: load the master's data once there is RDB support. For now the
+    // master always sends an empty file.
+    let _rdb = link.read_rdb()?;
+    link.apply_commands(server)
 }
 
 /// Connects to the master and runs the handshake.
@@ -62,6 +73,39 @@ impl MasterLink {
         Ok(reply)
     }
 
+    /// Applies the commands the master forwards, without replying, until
+    /// the connection ends.
+    fn apply_commands(&mut self, server: &ServerState) -> io::Result<()> {
+        let mut conn = ConnState::default();
+        loop {
+            let value = self.read_value()?;
+            let Some(words) = command_words(value.clone()).filter(|w| !w.is_empty()) else {
+                return Err(io::Error::other(format!("bad command from master: {value:?}")));
+            };
+            commands::dispatch(words, &mut Ctx::new(server, &mut conn));
+        }
+    }
+
+    /// The RDB file after FULLRESYNC: `$<len>\r\n<bytes>`, no trailing CRLF.
+    fn read_rdb(&mut self) -> io::Result<Vec<u8>> {
+        loop {
+            if let Some(eol) = self.buf.windows(2).position(|w| w == b"\r\n") {
+                let header = std::str::from_utf8(&self.buf[..eol]).unwrap_or("");
+                let len: usize = header
+                    .strip_prefix('$')
+                    .and_then(|n| n.parse().ok())
+                    .ok_or_else(|| io::Error::other(format!("bad RDB header {header:?}")))?;
+                let start = eol + 2;
+                if self.buf.len() >= start + len {
+                    let rdb = self.buf[start..start + len].to_vec();
+                    self.buf.drain(..start + len);
+                    return Ok(rdb);
+                }
+            }
+            self.fill()?;
+        }
+    }
+
     fn read_value(&mut self) -> io::Result<RespValue> {
         loop {
             match resp::parse(&self.buf) {
@@ -93,8 +137,13 @@ mod tests {
     use std::net::{TcpListener, TcpStream};
     use std::thread::{self, JoinHandle};
 
-    use super::connect;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    use super::{connect, run};
+    use crate::replication::rdb;
     use crate::resp::{self, RespValue};
+    use crate::server::ServerState;
 
     /// A fake master that expects `script`'s commands in order and sends
     /// each step's raw reply. Returns its port.
@@ -156,5 +205,64 @@ mod tests {
         let (port, master) = fake_master(vec![(vec!["PING"], b"-ERR nope\r\n".to_vec())]);
         assert!(connect("127.0.0.1", port, 6380).is_err());
         master.join().unwrap();
+    }
+
+    fn encode(commands: &[&[&str]]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for words in commands {
+            RespValue::bulk_array(words.iter().copied()).encode(&mut out);
+        }
+        out
+    }
+
+    /// The master's reply to PSYNC, followed by `extra` in the same packet.
+    fn fullresync_then(extra: &[u8]) -> Vec<u8> {
+        let rdb = rdb::empty();
+        let mut out = format!("+FULLRESYNC {} 0\r\n${}\r\n", "a".repeat(40), rdb.len()).into_bytes();
+        out.extend_from_slice(&rdb);
+        out.extend_from_slice(extra);
+        out
+    }
+
+    /// Starts a replica of a fake master that runs the handshake, then
+    /// sends `after_psync` right behind the RDB file. Returns the replica's
+    /// state and the master's end of the connection.
+    fn replica_of_fake_master(after_psync: &[u8]) -> (Arc<ServerState>, TcpStream) {
+        let mut script = handshake_script("6380");
+        script.last_mut().unwrap().1 = fullresync_then(after_psync);
+        let (port, master) = fake_master(script);
+        let server = Arc::new(ServerState::default());
+        let replica = Arc::clone(&server);
+        thread::spawn(move || run(&replica, "127.0.0.1", port, 6380));
+        (server, master.join().unwrap())
+    }
+
+    /// Waits up to 1 s for `key` to have `value` on the replica.
+    fn wait_for_value(server: &ServerState, key: &str, value: &str) {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while Instant::now() < deadline {
+            if server.store().get_string(key).ok().flatten().map(String::as_str) == Some(value) {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!("{key} never became {value}");
+    }
+
+    #[test]
+    fn applies_commands_from_the_master_without_replying() {
+        // Commands in the same packet as the RDB file...
+        let (server, mut master) =
+            replica_of_fake_master(&encode(&[&["SET", "foo", "1"], &["SET", "bar", "2"]]));
+        wait_for_value(&server, "foo", "1");
+        wait_for_value(&server, "bar", "2");
+        // ...and in later packets.
+        master.write_all(&encode(&[&["SET", "baz", "3"], &["INCR", "foo"]])).unwrap();
+        wait_for_value(&server, "baz", "3");
+        wait_for_value(&server, "foo", "2");
+
+        master.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+        let mut buf = [0u8; 64];
+        assert!(master.read(&mut buf).is_err(), "the replica must not reply");
     }
 }
