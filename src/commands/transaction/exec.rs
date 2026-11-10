@@ -22,10 +22,21 @@ impl Command for Exec {
         // A command that fails here only puts its error in the replies;
         // the others still run (Redis has no rollback).
         let replies = ctx.atomically(|ctx| {
-            tx.queued.into_iter().map(|(handler, args)| handler(args, ctx)).collect()
+            // Checked under the same lock, so nothing can change in between.
+            if watched_key_changed(ctx) {
+                return None;
+            }
+            Some(tx.queued.into_iter().map(|(handler, args)| handler(args, ctx)).collect())
         });
-        Ok(RespValue::Array(replies))
+        // A watched key changed: nothing ran, reply with a null array.
+        Ok(replies.map_or(RespValue::NullArray, RespValue::Array))
     }
+}
+
+fn watched_key_changed(ctx: &mut Ctx) -> bool {
+    let watched = ctx.conn.watched.clone();
+    let mut store = ctx.store();
+    watched.iter().any(|(key, version)| store.version(key) != *version)
 }
 
 #[cfg(test)]

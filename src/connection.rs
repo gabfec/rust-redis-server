@@ -10,6 +10,8 @@ use crate::server::ServerState;
 pub struct ConnState {
     /// `Some` between MULTI and EXEC/DISCARD.
     pub transaction: Option<Transaction>,
+    /// Keys from WATCH, with their version at that time.
+    pub watched: Vec<(String, u64)>,
 }
 
 pub fn handle(mut stream: TcpStream, server: &ServerState) -> io::Result<()> {

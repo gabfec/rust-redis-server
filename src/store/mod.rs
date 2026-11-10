@@ -31,12 +31,29 @@ struct Entry {
 pub struct WrongType;
 
 /// The keyspace. Every accessor drops the key first if it has expired.
+///
+/// Every key also has a version (for WATCH) that changes whenever the key
+/// is created, modified, replaced, deleted or expires. Accessors that hand
+/// out `&mut` count as a modification.
 #[derive(Default)]
 pub struct Store {
     data: HashMap<String, Entry>,
+    /// Last version of every key ever modified; 0 if never modified.
+    versions: HashMap<String, u64>,
+    last_version: u64,
 }
 
 impl Store {
+    pub fn version(&mut self, key: &str) -> u64 {
+        self.purge_if_expired(key);
+        self.versions.get(key).copied().unwrap_or(0)
+    }
+
+    fn touch(&mut self, key: &str) {
+        self.last_version += 1;
+        self.versions.insert(key.to_owned(), self.last_version);
+    }
+
     pub fn get(&mut self, key: &str) -> Option<&Value> {
         self.purge_if_expired(key);
         self.data.get(key).map(|e| &e.value)
@@ -44,17 +61,22 @@ impl Store {
 
     fn get_mut(&mut self, key: &str) -> Option<&mut Value> {
         self.purge_if_expired(key);
+        if self.data.contains_key(key) {
+            self.touch(key);
+        }
         self.data.get_mut(key).map(|e| &mut e.value)
     }
 
     fn get_or_insert(&mut self, key: String, default: impl FnOnce() -> Value) -> &mut Value {
         self.purge_if_expired(&key);
+        self.touch(&key);
         let entry = self.data.entry(key).or_insert_with(|| Entry { value: default(), expires_at: None });
         &mut entry.value
     }
 
     pub fn set(&mut self, key: String, value: Value, ttl: Option<Duration>) {
         let expires_at = ttl.map(|ttl| Instant::now() + ttl);
+        self.touch(&key);
         self.data.insert(key, Entry { value, expires_at });
     }
 
@@ -66,6 +88,7 @@ impl Store {
             .is_some_and(|at| Instant::now() >= at);
         if expired {
             self.data.remove(key);
+            self.touch(key);
         }
     }
 

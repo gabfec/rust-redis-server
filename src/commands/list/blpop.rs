@@ -27,6 +27,10 @@ impl Command for Blpop {
     fn execute(self, ctx: &mut Ctx) -> Result<RespValue, CmdError> {
         let popped = ctx.wait_for(self.timeout, |store| {
             self.keys.iter().find_map(|key| {
+                // Check first: taking the list mutably counts as a change (WATCH).
+                if store.get_list(key).ok()??.is_empty() {
+                    return None;
+                }
                 let list = store.get_list_mut(key).ok()??;
                 let value = list.pop_front()?;
                 Some(RespValue::bulk_array([key.clone(), value]))
