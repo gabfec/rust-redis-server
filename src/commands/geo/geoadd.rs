@@ -1,4 +1,5 @@
-use super::{parse_point, Point};
+use super::parse_point;
+use crate::geo::Point;
 use crate::commands::{Args, CmdError, Command, Ctx};
 use crate::resp::RespValue;
 
@@ -11,7 +12,6 @@ pub struct Geoadd {
 }
 
 struct Location {
-    #[allow(dead_code)] // used for the score in a later stage
     point: Point,
     member: String,
 }
@@ -36,7 +36,7 @@ impl Command for Geoadd {
     fn execute(self, ctx: &mut Ctx) -> Result<RespValue, CmdError> {
         let mut store = ctx.store();
         let set = store.zset_or_create(self.key)?;
-        let added = self.locations.into_iter().filter(|location| set.insert(location.member.clone(), 0.0)).count();
+        let added = self.locations.into_iter().filter(|location| set.insert(location.member.clone(), location.point.score())).count();
         Ok(RespValue::Integer(added as i64))
     }
 }
@@ -63,6 +63,15 @@ mod tests {
         c.cmd(&["GEOADD", "places", "2.2944692", "48.8584625", "Paris"]);
         assert_eq!(c.cmd(&["TYPE", "places"]), RespValue::Simple("zset".into()));
         assert_eq!(c.cmd(&["ZRANGE", "places", "0", "-1"]), RespValue::bulk_array(["Paris"]));
+    }
+
+    #[test]
+    fn scores_locations_by_geohash() {
+        let mut c = Client::default();
+        c.cmd(&["GEOADD", "places", "2.2944692", "48.8584625", "Paris"]);
+        c.cmd(&["GEOADD", "places", "-0.127758", "51.507351", "London"]);
+        assert_eq!(c.cmd(&["ZSCORE", "places", "Paris"]), RespValue::bulk("3663832614298053"));
+        assert_eq!(c.cmd(&["ZSCORE", "places", "London"]), RespValue::bulk("2163557714754256"));
     }
 
     #[test]

@@ -1,20 +1,7 @@
 pub mod geoadd;
 
 use crate::commands::CmdError;
-
-const MIN_LONGITUDE: f64 = -180.0;
-const MAX_LONGITUDE: f64 = 180.0;
-/// Latitudes stop short of the poles because of the Web Mercator
-/// projection Redis uses.
-const MIN_LATITUDE: f64 = -85.05112878;
-const MAX_LATITUDE: f64 = 85.05112878;
-
-/// A location on Earth, in degrees.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Point {
-    pub longitude: f64,
-    pub latitude: f64,
-}
+use crate::geo::{Point, MAX_LATITUDE, MAX_LONGITUDE, MIN_LATITUDE, MIN_LONGITUDE};
 
 /// Parses and validates a longitude, latitude pair.
 fn parse_point(longitude: &str, latitude: &str) -> Result<Point, CmdError> {
