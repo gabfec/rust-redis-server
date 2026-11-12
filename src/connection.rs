@@ -1,10 +1,16 @@
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use crate::commands::{self, Ctx, Transaction};
 use crate::resp::{self, RespValue};
 use crate::server::ServerState;
+
+/// Where to write to a client. Everything sent to it (replies, and
+/// messages published by other clients) goes through this one lock, so
+/// they can't interleave.
+pub type Writer = Arc<Mutex<TcpStream>>;
 
 /// Per-connection state (subscriptions, replica flag, ... go here too).
 #[derive(Default)]
@@ -23,6 +29,8 @@ pub struct ConnState {
     pub subscriptions: Vec<String>,
     /// Unique id, given on first use (see `id()`).
     client_id: Option<u64>,
+    /// The client's socket (`None` in unit tests).
+    pub writer: Option<Writer>,
 }
 
 impl ConnState {
@@ -47,6 +55,8 @@ pub fn handle(mut stream: TcpStream, server: &ServerState) -> io::Result<()> {
 }
 
 fn serve(stream: &mut TcpStream, server: &ServerState, conn: &mut ConnState) -> io::Result<()> {
+    let writer = Arc::new(Mutex::new(stream.try_clone()?));
+    conn.writer = Some(Arc::clone(&writer));
     let mut buf = Vec::new();
     let mut chunk = [0u8; 4096];
 
@@ -80,7 +90,7 @@ fn serve(stream: &mut TcpStream, server: &ServerState, conn: &mut ConnState) -> 
             // replica also gets every write.
             conn.replica_id = Some(server.replication.add_replica(stream.try_clone()?, &out)?);
         } else if !out.is_empty() {
-            stream.write_all(&out)?;
+            writer.lock().unwrap().write_all(&out)?;
         }
     }
 }
@@ -233,5 +243,35 @@ mod tests {
         send(&mut client, &["WAIT", "3", "300"]);
         assert_eq!(read_line(&mut client), ":2\r\n");
         assert!(start.elapsed() >= Duration::from_millis(300));
+    }
+
+    #[test]
+    fn published_messages_reach_subscribers_only() {
+        let (port, _server) = start_server();
+        let connect = || TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let (mut foo1, mut foo2, mut bar) = (connect(), connect(), connect());
+        for (client, channel) in [(&mut foo1, "foo"), (&mut foo2, "foo"), (&mut bar, "bar")] {
+            send(client, &["SUBSCRIBE", channel]);
+            assert!(read_available(client).starts_with("*3\r\n$9\r\nsubscribe\r\n"));
+        }
+
+        let mut publisher = connect();
+        send(&mut publisher, &["PUBLISH", "foo", "hello"]);
+        assert_eq!(read_line(&mut publisher), ":2\r\n");
+        let hello = "*3\r\n$7\r\nmessage\r\n$3\r\nfoo\r\n$5\r\nhello\r\n";
+        assert_eq!(read_available(&mut foo1), hello);
+        assert_eq!(read_available(&mut foo2), hello);
+        assert_eq!(read_available(&mut bar), "", "not subscribed to foo");
+
+        send(&mut publisher, &["PUBLISH", "bar", "world"]);
+        assert_eq!(read_line(&mut publisher), ":1\r\n");
+        assert_eq!(read_available(&mut bar), "*3\r\n$7\r\nmessage\r\n$3\r\nbar\r\n$5\r\nworld\r\n");
+        assert_eq!(read_available(&mut foo1), "");
+
+        // A subscriber that disconnects no longer counts.
+        drop(bar);
+        thread::sleep(Duration::from_millis(50));
+        send(&mut publisher, &["PUBLISH", "bar", "anyone?"]);
+        assert_eq!(read_line(&mut publisher), ":0\r\n");
     }
 }

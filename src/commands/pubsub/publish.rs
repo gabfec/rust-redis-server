@@ -2,22 +2,24 @@ use crate::commands::{Args, CmdError, Command, Ctx};
 use crate::resp::RespValue;
 
 /// PUBLISH channel message
-/// Returns how many clients are subscribed to the channel.
+/// Delivers the message to the channel's subscribers and returns how many
+/// there are.
 pub struct Publish {
     channel: String,
+    message: String,
 }
 
 impl Command for Publish {
     fn parse(mut args: Args) -> Result<Self, CmdError> {
         let channel = args.next_string()?;
-        let _message = args.next_string()?;
+        let message = args.next_string()?;
         args.finish()?;
-        Ok(Publish { channel })
+        Ok(Publish { channel, message })
     }
 
     fn execute(self, ctx: &mut Ctx) -> Result<RespValue, CmdError> {
-        // TODO: deliver the message.
-        Ok(RespValue::Integer(ctx.server.pubsub.subscriber_count(&self.channel) as i64))
+        let count = ctx.server.pubsub.publish(&self.channel, &self.message);
+        Ok(RespValue::Integer(count as i64))
     }
 }
 
