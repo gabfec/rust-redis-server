@@ -42,7 +42,8 @@ impl Command for Acl {
 
     fn execute(self, ctx: &mut Ctx) -> Result<RespValue, CmdError> {
         match self {
-            Acl::Whoami => Ok(RespValue::bulk("default")),
+            // Only authenticated connections get this far.
+            Acl::Whoami => Ok(RespValue::bulk(ctx.conn.login.user().unwrap_or("default"))),
             Acl::Getuser(name) => Ok(match ctx.server.users.get(&name) {
                 Some(user) => RespValue::Array(vec![
                     RespValue::bulk("flags"),
@@ -62,7 +63,8 @@ impl Command for Acl {
 
 #[cfg(test)]
 mod tests {
-    use crate::commands::test_util::{err, Client};
+    use crate::commands::test_util::{err, run, Client};
+    use crate::connection::ConnState;
     use crate::resp::RespValue;
 
     #[test]
@@ -90,6 +92,25 @@ mod tests {
         let mut c = Client::default();
         assert_eq!(getuser(&mut c, "default"), user(&["nopass"], &[]));
         assert_eq!(getuser(&mut c, "nobody"), RespValue::NullBulk);
+    }
+
+    #[test]
+    fn a_password_on_the_default_user_requires_auth_for_new_connections() {
+        let mut c = Client::default();
+        let mut before = ConnState::new(&c.server);
+        assert_eq!(c.cmd(&["ACL", "SETUSER", "default", ">newpassword"]), RespValue::ok());
+        assert_eq!(c.cmd(&["ACL", "WHOAMI"]), RespValue::bulk("default"), "still authenticated");
+        assert_eq!(run(&c.server, &mut before, &["ACL", "WHOAMI"]), RespValue::bulk("default"));
+
+        let mut after = ConnState::new(&c.server);
+        let noauth = err("NOAUTH Authentication required.");
+        assert_eq!(run(&c.server, &mut after, &["ACL", "WHOAMI"]), noauth);
+        assert_eq!(run(&c.server, &mut after, &["PING"]), noauth);
+        assert_eq!(run(&c.server, &mut after, &["NOSUCHCOMMAND"]), noauth);
+
+        c.cmd(&["ACL", "SETUSER", "default", "nopass"]);
+        let mut later = ConnState::new(&c.server);
+        assert_eq!(run(&c.server, &mut later, &["PING"]), RespValue::Simple("PONG".into()));
     }
 
     const MYPASSWORD: &str = "89e01536ac207279409d4de1e5253e01f4a1769e696db0d6062ca9b8f56767c8";

@@ -34,6 +34,23 @@ impl Rule {
     }
 }
 
+/// Who a connection is authenticated as, if anyone.
+#[derive(Debug)]
+pub struct Login(Option<String>);
+
+impl Default for Login {
+    /// The default user, as when it has nopass.
+    fn default() -> Self {
+        Login(Some("default".into()))
+    }
+}
+
+impl Login {
+    pub fn user(&self) -> Option<&str> {
+        self.0.as_deref()
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct User {
     /// Any password (or none) authenticates as this user.
@@ -93,6 +110,15 @@ impl Default for Users {
 impl Users {
     pub fn get(&self, name: &str) -> Option<User> {
         self.users.lock().unwrap().get(name).cloned()
+    }
+
+    /// How a new connection starts: as the default user while it has
+    /// nopass, otherwise not authenticated.
+    pub fn new_login(&self) -> Login {
+        match self.get("default") {
+            Some(user) if user.nopass => Login::default(),
+            _ => Login(None),
+        }
     }
 
     /// Whether this username and password authenticate.

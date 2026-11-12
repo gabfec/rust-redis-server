@@ -3,6 +3,7 @@ use std::net::TcpStream;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::acl::Login;
 use crate::commands::{self, Ctx, Transaction};
 use crate::resp::{self, RespValue};
 use crate::server::ServerState;
@@ -31,9 +32,17 @@ pub struct ConnState {
     client_id: Option<u64>,
     /// The client's socket (`None` in unit tests).
     pub writer: Option<Writer>,
+    /// Who the client is authenticated as. Internal connections (AOF
+    /// replay, the link to the master) are the default user.
+    pub login: Login,
 }
 
 impl ConnState {
+    /// The state of a new client connection.
+    pub fn new(server: &ServerState) -> Self {
+        ConnState { login: server.users.new_login(), ..Default::default() }
+    }
+
     /// This connection's unique id.
     pub fn id(&mut self) -> u64 {
         static NEXT_ID: AtomicU64 = AtomicU64::new(1);
@@ -42,7 +51,7 @@ impl ConnState {
 }
 
 pub fn handle(mut stream: TcpStream, server: &ServerState) -> io::Result<()> {
-    let mut conn = ConnState::default();
+    let mut conn = ConnState::new(server);
     let result = serve(&mut stream, server, &mut conn);
     // However the connection ended, forget about it.
     if let Some(id) = conn.replica_id {

@@ -33,6 +33,9 @@ use crate::store::{Store, WrongType};
 /// command name.
 pub fn dispatch(words: Vec<String>, ctx: &mut Ctx) -> RespValue {
     let name = words[0].to_ascii_lowercase();
+    if ctx.conn.login.user().is_none() && name != "auth" {
+        return RespValue::Error("NOAUTH Authentication required.".into());
+    }
     let Some(spec) = lookup(&name) else {
         // Like Redis, an unknown command makes the whole transaction fail.
         if let Some(tx) = &mut ctx.conn.transaction {
