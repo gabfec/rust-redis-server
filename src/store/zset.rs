@@ -34,6 +34,11 @@ impl SortedSet {
         self.order.iter().skip(start).take(stop.saturating_sub(start) + 1).map(|(_, m)| m.as_str())
     }
 
+    /// All (member, score) pairs, in order.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, f64)> {
+        self.order.iter().map(|(score, member)| (member.as_str(), score.0))
+    }
+
     /// Returns true if the member was there.
     pub fn remove(&mut self, member: &str) -> bool {
         match self.scores.remove(member) {

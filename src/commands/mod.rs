@@ -119,6 +119,7 @@ fn lookup(name: &str) -> Option<Spec> {
         "geoadd" => spec::<geo::geoadd::Geoadd>(),
         "geopos" => spec::<geo::geopos::Geopos>(),
         "geodist" => spec::<geo::geodist::Geodist>(),
+        "geosearch" => spec::<geo::geosearch::Geosearch>(),
         // lists
         "rpush" => spec::<list::rpush::Rpush>(),
         "lpush" => spec::<list::lpush::Lpush>(),

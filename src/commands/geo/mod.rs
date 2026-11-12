@@ -1,6 +1,7 @@
 pub mod geoadd;
 pub mod geodist;
 pub mod geopos;
+pub mod geosearch;
 
 use crate::commands::CmdError;
 use crate::geo::{Point, MAX_LATITUDE, MAX_LONGITUDE, MIN_LATITUDE, MIN_LONGITUDE};
