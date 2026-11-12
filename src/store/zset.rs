@@ -21,6 +21,15 @@ impl SortedSet {
         old.is_none()
     }
 
+    pub fn len(&self) -> usize {
+        self.scores.len()
+    }
+
+    /// Members at positions `start..=stop`, in order.
+    pub fn range(&self, start: usize, stop: usize) -> impl Iterator<Item = &str> {
+        self.order.iter().skip(start).take(stop.saturating_sub(start) + 1).map(|(_, m)| m.as_str())
+    }
+
     /// 0-based position of the member in the order.
     pub fn rank(&self, member: &str) -> Option<usize> {
         let score = *self.scores.get(member)?;
