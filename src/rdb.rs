@@ -175,7 +175,18 @@ pub mod test_util {
 mod tests {
     use super::test_util::{file, string_entry, temp_dir};
     use super::{load_into, parse, Entry};
+    use crate::commands::test_util::Client;
+    use crate::resp::RespValue;
     use crate::store::Store;
+
+    /// A client of a server that loaded an RDB file with `entries`.
+    fn client_with_rdb(name: &str, entries: &[Vec<u8>]) -> Client {
+        let path = temp_dir(name).join("dump.rdb");
+        std::fs::write(&path, file(entries)).unwrap();
+        let c = Client::default();
+        load_into(&mut c.server.store(), &path).unwrap();
+        c
+    }
     #[test]
     fn empty_rdb_has_the_redis_header() {
         let rdb = super::empty();
@@ -229,5 +240,16 @@ mod tests {
         assert_eq!(load_into(&mut store, &path), Ok(1));
         assert_eq!(store.keys(), ["foo"]);
         assert_eq!(store.get_string("foo").unwrap().map(String::as_str), Some("bar"));
+    }
+
+    #[test]
+    fn get_a_string_value() {
+        let mut integer = vec![0x00];
+        integer.extend(super::test_util::string("count"));
+        integer.extend([0xC1, 0x39, 0x30]); // 12345
+        let mut c = client_with_rdb("rdb-get", &[string_entry("foo", "bar"), integer]);
+        assert_eq!(c.cmd(&["GET", "foo"]), RespValue::bulk("bar"));
+        assert_eq!(c.cmd(&["GET", "count"]), RespValue::bulk("12345"));
+        assert_eq!(c.cmd(&["INCR", "count"]), RespValue::Integer(12346));
     }
 }
