@@ -54,7 +54,7 @@ mod tests {
         let mut c = Client::default();
         assert_eq!(
             c.cmd(&["ACL", "GETUSER", "default"]),
-            RespValue::Array(vec![RespValue::bulk("flags"), RespValue::Array(vec![])])
+            RespValue::Array(vec![RespValue::bulk("flags"), RespValue::bulk_array(["nopass"])])
         );
         assert_eq!(c.cmd(&["ACL", "GETUSER", "nobody"]), RespValue::NullBulk);
     }

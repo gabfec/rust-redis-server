@@ -4,12 +4,19 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 #[derive(Clone, Debug, Default)]
-pub struct User {}
+pub struct User {
+    /// Any password (or none) authenticates as this user.
+    pub nopass: bool,
+}
 
 impl User {
     /// The flags ACL GETUSER shows.
     pub fn flags(&self) -> Vec<&'static str> {
-        Vec::new()
+        let mut flags = Vec::new();
+        if self.nopass {
+            flags.push("nopass");
+        }
+        flags
     }
 }
 
@@ -19,7 +26,9 @@ pub struct Users {
 
 impl Default for Users {
     fn default() -> Self {
-        let users = HashMap::from([("default".to_string(), User::default())]);
+        // Like in Redis, the default user starts without a password, so
+        // new connections are authenticated as it.
+        let users = HashMap::from([("default".to_string(), User { nopass: true })]);
         Users { users: Mutex::new(users) }
     }
 }
