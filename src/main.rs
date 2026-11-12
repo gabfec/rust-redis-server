@@ -1,6 +1,7 @@
 mod commands;
 mod config;
 mod connection;
+mod rdb;
 mod replication;
 mod resp;
 mod server;

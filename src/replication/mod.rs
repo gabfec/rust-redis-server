@@ -1,6 +1,5 @@
 //! Leader-follower replication.
 
-pub mod rdb;
 pub mod replica;
 
 use std::collections::hash_map::RandomState;

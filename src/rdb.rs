@@ -1,5 +1,5 @@
-//! RDB snapshot files. Only the empty one so far, which the master sends
-//! to a replica after FULLRESYNC.
+//! RDB snapshot files. The master sends an empty one to a replica after
+//! FULLRESYNC.
 
 /// An RDB file with no keys (Redis 7.2 format).
 const EMPTY_RDB_HEX: &str = "524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2";

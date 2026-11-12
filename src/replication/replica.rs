@@ -155,7 +155,7 @@ mod tests {
 
     use super::{connect, run};
     use crate::replication::test_util::read_command;
-    use crate::replication::rdb;
+    use crate::rdb;
     use crate::resp::RespValue;
     use crate::server::ServerState;
 

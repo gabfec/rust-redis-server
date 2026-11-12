@@ -94,7 +94,7 @@ mod tests {
 
     use std::time::{Duration, Instant};
 
-    use crate::replication::rdb;
+    use crate::rdb;
     use crate::replication::test_util::{read_available, read_command_with_len};
     use crate::resp::RespValue;
     use crate::server::ServerState;

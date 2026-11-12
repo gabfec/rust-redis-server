@@ -1,7 +1,7 @@
 use std::io::Write;
 
 use crate::commands::{Args, CmdError, Command, Ctx};
-use crate::replication::rdb;
+use crate::rdb;
 use crate::resp::RespValue;
 
 /// PSYNC <replid> <offset>
@@ -35,7 +35,7 @@ impl Command for Psync {
 #[cfg(test)]
 mod tests {
     use crate::commands::test_util::Client;
-    use crate::replication::rdb;
+    use crate::rdb;
     use crate::resp::RespValue;
 
     #[test]
