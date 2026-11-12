@@ -1,3 +1,4 @@
+mod aof;
 mod commands;
 mod config;
 mod connection;
@@ -23,6 +24,10 @@ fn main() {
         std::process::exit(1);
     });
     println!("listening on port {}", config.port);
+    if let Err(e) = aof::init(&config) {
+        eprintln!("error: cannot set up the append-only file: {e}");
+        std::process::exit(1);
+    }
     let server = Arc::new(ServerState::new(&config));
     let rdb_path = std::path::Path::new(&config.dir).join(&config.dbfilename);
     match rdb::load_into(&mut server.store(), &rdb_path) {
