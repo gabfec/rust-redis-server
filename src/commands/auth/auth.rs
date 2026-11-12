@@ -1,8 +1,9 @@
+use crate::acl::Login;
 use crate::commands::{Args, CmdError, Command, Ctx};
 use crate::resp::RespValue;
 
 /// AUTH [username] password
-/// Checks a username and password; the username defaults to "default".
+/// Authenticates the connection as the user (by default "default").
 pub struct Auth {
     username: String,
     password: String,
@@ -27,13 +28,15 @@ impl Command for Auth {
                 "WRONGPASS invalid username-password pair or user is disabled.".into(),
             ));
         }
+        ctx.conn.login = Login::as_user(self.username);
         Ok(RespValue::ok())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::commands::test_util::{err, Client};
+    use crate::commands::test_util::{err, run, Client};
+    use crate::connection::ConnState;
     use crate::resp::RespValue;
 
     const WRONGPASS: &str = "WRONGPASS invalid username-password pair or user is disabled.";
@@ -46,6 +49,28 @@ mod tests {
         assert_eq!(c.cmd(&["AUTH", "default", "mypassword"]), RespValue::ok());
         assert_eq!(c.cmd(&["AUTH", "mypassword"]), RespValue::ok(), "the default user");
         assert_eq!(c.cmd(&["AUTH", "nobody", "mypassword"]), err(WRONGPASS));
+    }
+
+    #[test]
+    fn authenticates_the_connection() {
+        let mut c = Client::default();
+        c.cmd(&["ACL", "SETUSER", "default", ">newpassword"]);
+        let mut conn = ConnState::new(&c.server);
+        let mut cmd = |words: &[&str]| run(&c.server, &mut conn, words);
+        assert_eq!(cmd(&["PING"]), err("NOAUTH Authentication required."));
+        assert_eq!(cmd(&["AUTH", "default", "wrong"]), err(WRONGPASS));
+        assert_eq!(cmd(&["PING"]), err("NOAUTH Authentication required."), "still not authenticated");
+        assert_eq!(cmd(&["AUTH", "default", "newpassword"]), RespValue::ok());
+        assert_eq!(cmd(&["PING"]), RespValue::Simple("PONG".into()));
+        assert_eq!(cmd(&["ACL", "WHOAMI"]), RespValue::bulk("default"));
+    }
+
+    #[test]
+    fn authenticates_as_another_user() {
+        let mut c = Client::default();
+        c.cmd(&["ACL", "SETUSER", "alice", ">secret"]);
+        assert_eq!(c.cmd(&["AUTH", "alice", "secret"]), RespValue::ok());
+        assert_eq!(c.cmd(&["ACL", "WHOAMI"]), RespValue::bulk("alice"));
     }
 
     #[test]

@@ -49,6 +49,10 @@ impl Login {
     pub fn user(&self) -> Option<&str> {
         self.0.as_deref()
     }
+
+    pub fn as_user(name: String) -> Login {
+        Login(Some(name))
+    }
 }
 
 #[derive(Clone, Debug, Default)]
