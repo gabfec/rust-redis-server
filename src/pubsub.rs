@@ -21,6 +21,16 @@ impl PubSub {
         channels.entry(channel.to_string()).or_default().insert(client, writer);
     }
 
+    pub fn unsubscribe(&self, client: u64, channel: &str) {
+        let mut channels = self.channels.lock().unwrap();
+        if let Some(clients) = channels.get_mut(channel) {
+            clients.remove(&client);
+            if clients.is_empty() {
+                channels.remove(channel);
+            }
+        }
+    }
+
     /// Removes the client from every channel (when it disconnects).
     pub fn unsubscribe_all(&self, client: u64) {
         let mut channels = self.channels.lock().unwrap();

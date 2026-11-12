@@ -1,5 +1,6 @@
 pub mod publish;
 pub mod subscribe;
+pub mod unsubscribe;
 
 /// Commands a client can still run once it has subscribed to a channel.
 pub fn allowed_in_subscribed_mode(name: &str) -> bool {

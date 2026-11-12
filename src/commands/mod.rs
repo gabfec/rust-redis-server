@@ -120,6 +120,7 @@ fn lookup(name: &str) -> Option<Spec> {
         // pub/sub
         "subscribe" => spec::<pubsub::subscribe::Subscribe>(),
         "publish" => spec::<pubsub::publish::Publish>(),
+        "unsubscribe" => spec::<pubsub::unsubscribe::Unsubscribe>(),
         // replication
         "replconf" => spec::<replication::replconf::Replconf>(),
         "psync" => spec::<replication::psync::Psync>(),
