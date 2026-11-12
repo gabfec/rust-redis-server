@@ -296,4 +296,37 @@ mod tests {
         assert_eq!(c.cmd(&["GET", "foo"]), RespValue::bulk("bar"));
         assert_eq!(fs::read_to_string(dir.join("aofdir/random.aof.1.incr.aof")).unwrap(), log, "not logged twice");
     }
+
+    #[test]
+    fn replays_multiple_commands_in_order() {
+        let log = "*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$2\r\n41\r\n\
+                   *3\r\n$3\r\nSET\r\n$3\r\nbar\r\n$5\r\nhello\r\n\
+                   *2\r\n$4\r\nINCR\r\n$3\r\nfoo\r\n\
+                   *3\r\n$5\r\nRPUSH\r\n$1\r\nl\r\n$1\r\na\r\n\
+                   *3\r\n$3\r\nSET\r\n$3\r\nbaz";
+        let (_dir, config) = existing_aof("aof-replay-many", log);
+        let mut c = restart(&config);
+        assert_eq!(c.cmd(&["GET", "foo"]), RespValue::bulk("42"));
+        assert_eq!(c.cmd(&["GET", "bar"]), RespValue::bulk("hello"));
+        assert_eq!(c.cmd(&["LRANGE", "l", "0", "-1"]), RespValue::bulk_array(["a"]));
+        assert_eq!(c.cmd(&["GET", "baz"]), RespValue::NullBulk, "the incomplete command is ignored");
+    }
+
+    #[test]
+    fn writes_survive_a_restart() {
+        let dir = temp_dir("aof-restart");
+        let config = aof_config(&dir);
+        let mut c = restart(&config);
+        c.cmd(&["SET", "counter", "1"]);
+        c.cmd(&["INCR", "counter"]);
+        c.cmd(&["RPUSH", "l", "x", "y"]);
+        drop(c);
+
+        let mut c = restart(&config);
+        assert_eq!(c.cmd(&["GET", "counter"]), RespValue::bulk("2"));
+        assert_eq!(c.cmd(&["LRANGE", "l", "0", "-1"]), RespValue::bulk_array(["x", "y"]));
+        c.cmd(&["INCR", "counter"]);
+        drop(c);
+        assert_eq!(restart(&config).cmd(&["GET", "counter"]), RespValue::bulk("3"));
+    }
 }
