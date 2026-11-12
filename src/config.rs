@@ -11,12 +11,29 @@ pub struct Config {
     pub dir: String,
     /// Name of the RDB file in `dir`.
     pub dbfilename: String,
+    /// "yes" to log every write to the append-only file (AOF).
+    pub appendonly: String,
+    /// Directory under `dir` for the AOF files and their manifest.
+    pub appenddirname: String,
+    /// Base name of the AOF files.
+    pub appendfilename: String,
+    /// When AOF writes are flushed to disk: always, everysec or no.
+    pub appendfsync: String,
 }
 
 impl Default for Config {
     fn default() -> Self {
         let cwd = std::env::current_dir().map(|d| d.display().to_string()).unwrap_or_default();
-        Config { port: 6379, replicaof: None, dir: cwd, dbfilename: "dump.rdb".into() }
+        Config {
+            port: 6379,
+            replicaof: None,
+            dir: cwd,
+            dbfilename: "dump.rdb".into(),
+            appendonly: "no".into(),
+            appenddirname: "appendonlydir".into(),
+            appendfilename: "appendonly.aof".into(),
+            appendfsync: "everysec".into(),
+        }
     }
 }
 
@@ -49,6 +66,10 @@ impl Config {
             "port" => self.port.to_string(),
             "dir" => self.dir.clone(),
             "dbfilename" => self.dbfilename.clone(),
+            "appendonly" => self.appendonly.clone(),
+            "appenddirname" => self.appenddirname.clone(),
+            "appendfilename" => self.appendfilename.clone(),
+            "appendfsync" => self.appendfsync.clone(),
             _ => return None,
         })
     }
@@ -110,5 +131,16 @@ mod tests {
         assert_eq!(config.get("dir").as_deref(), Some("/tmp/redis-files"));
         assert_eq!(config.get("dbfilename").as_deref(), Some("dump.rdb"));
         assert_eq!(config.get("nope"), None);
+    }
+
+    #[test]
+    fn aof_defaults() {
+        let config = parse(&[]).unwrap();
+        let get = |name| config.get(name).unwrap();
+        assert_eq!(get("appendonly"), "no");
+        assert_eq!(get("appenddirname"), "appendonlydir");
+        assert_eq!(get("appendfilename"), "appendonly.aof");
+        assert_eq!(get("appendfsync"), "everysec");
+        assert_eq!(get("dir"), std::env::current_dir().unwrap().display().to_string());
     }
 }
