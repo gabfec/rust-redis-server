@@ -26,6 +26,13 @@ impl RespValue {
         RespValue::Array(items.into_iter().map(RespValue::bulk).collect())
     }
 
+    /// Several replies to one command, sent one after the other.
+    pub fn sequence(values: impl IntoIterator<Item = RespValue>) -> Self {
+        let mut out = Vec::new();
+        values.into_iter().for_each(|value| value.encode(&mut out));
+        RespValue::Raw(out)
+    }
+
     pub fn encode(&self, out: &mut Vec<u8>) {
         // Writing to a Vec<u8> cannot fail.
         let _ = match self {
