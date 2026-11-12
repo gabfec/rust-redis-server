@@ -1,6 +1,7 @@
 use std::sync::{Condvar, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
+use crate::acl::Users;
 use crate::aof::Aof;
 use crate::config::Config;
 use crate::pubsub::PubSub;
@@ -18,6 +19,7 @@ pub struct ServerState {
     /// The append-only file, once opened (after replaying it at startup).
     pub aof: OnceLock<Aof>,
     pub pubsub: PubSub,
+    pub users: Users,
 }
 
 impl ServerState {

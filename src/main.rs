@@ -1,3 +1,4 @@
+mod acl;
 mod aof;
 mod commands;
 mod config;
