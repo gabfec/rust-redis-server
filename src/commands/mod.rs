@@ -134,6 +134,7 @@ fn lookup(name: &str) -> Option<Spec> {
         "zrank" => spec::<zset::zrank::Zrank>(),
         "zrange" => spec::<zset::zrange::Zrange>(),
         "zcard" => spec::<zset::zcard::Zcard>(),
+        "zscore" => spec::<zset::zscore::Zscore>(),
         // transactions
         "multi" => spec::<transaction::multi::Multi>(),
         "exec" => spec::<transaction::exec::Exec>(),

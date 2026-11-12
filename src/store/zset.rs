@@ -21,6 +21,10 @@ impl SortedSet {
         old.is_none()
     }
 
+    pub fn score(&self, member: &str) -> Option<f64> {
+        self.scores.get(member).copied()
+    }
+
     pub fn len(&self) -> usize {
         self.scores.len()
     }
