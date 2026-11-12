@@ -109,6 +109,7 @@ fn lookup(name: &str) -> Option<Spec> {
         "wait" => spec::<replication::wait::Wait>(),
         // server
         "info" => spec::<server::info::Info>(),
+        "config" => spec::<server::config::Config>(),
         // transactions
         "multi" => spec::<transaction::multi::Multi>(),
         "exec" => spec::<transaction::exec::Exec>(),

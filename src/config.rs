@@ -1,15 +1,22 @@
-//! Command-line options: `--port <port>`, `--replicaof "<host> <port>"`.
+//! Command-line options: `--port <port>`, `--replicaof "<host> <port>"`,
+//! `--dir <dir>`, `--dbfilename <name>`.
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     pub port: u16,
     /// Master to replicate from, if this server is a replica.
     pub replicaof: Option<(String, u16)>,
+    /// Where data files (the RDB file) are stored. Defaults to the
+    /// directory the server was started in.
+    pub dir: String,
+    /// Name of the RDB file in `dir`.
+    pub dbfilename: String,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { port: 6379, replicaof: None }
+        let cwd = std::env::current_dir().map(|d| d.display().to_string()).unwrap_or_default();
+        Config { port: 6379, replicaof: None, dir: cwd, dbfilename: "dump.rdb".into() }
     }
 }
 
@@ -28,10 +35,22 @@ impl Config {
                     let master = value(&mut args, &flag)?;
                     config.replicaof = Some(parse_host_port(&master)?);
                 }
+                "--dir" => config.dir = value(&mut args, &flag)?,
+                "--dbfilename" => config.dbfilename = value(&mut args, &flag)?,
                 _ => return Err(format!("unknown option '{flag}'")),
             }
         }
         Ok(config)
+    }
+
+    /// A parameter's value, for CONFIG GET (`name` in lowercase).
+    pub fn get(&self, name: &str) -> Option<String> {
+        Some(match name {
+            "port" => self.port.to_string(),
+            "dir" => self.dir.clone(),
+            "dbfilename" => self.dbfilename.clone(),
+            _ => return None,
+        })
     }
 }
 
@@ -57,7 +76,11 @@ mod tests {
 
     #[test]
     fn defaults_to_6379() {
-        assert_eq!(parse(&[]), Ok(Config { port: 6379, replicaof: None }));
+        let config = parse(&[]).unwrap();
+        assert_eq!(config.port, 6379);
+        assert_eq!(config.replicaof, None);
+        assert_eq!(config.dir, std::env::current_dir().unwrap().display().to_string());
+        assert_eq!(config.dbfilename, "dump.rdb");
     }
 
     #[test]
@@ -79,5 +102,13 @@ mod tests {
         assert_eq!(parse(&["--port"]), Err("missing value for --port".into()));
         assert_eq!(parse(&["--port", "70000"]), Err("invalid port '70000'".into()));
         assert_eq!(parse(&["--nope"]), Err("unknown option '--nope'".into()));
+    }
+
+    #[test]
+    fn rdb_location() {
+        let config = parse(&["--dir", "/tmp/redis-files", "--dbfilename", "dump.rdb"]).unwrap();
+        assert_eq!(config.get("dir").as_deref(), Some("/tmp/redis-files"));
+        assert_eq!(config.get("dbfilename").as_deref(), Some("dump.rdb"));
+        assert_eq!(config.get("nope"), None);
     }
 }

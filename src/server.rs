@@ -12,11 +12,16 @@ pub struct ServerState {
     /// Signalled after every write command, so blocking commands re-check.
     changed: Condvar,
     pub replication: Replication,
+    pub config: Config,
 }
 
 impl ServerState {
     pub fn new(config: &Config) -> Self {
-        ServerState { replication: Replication::new(config), ..Default::default() }
+        ServerState {
+            replication: Replication::new(config),
+            config: config.clone(),
+            ..Default::default()
+        }
     }
 
     pub fn store(&self) -> MutexGuard<'_, Store> {
