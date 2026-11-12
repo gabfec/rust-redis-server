@@ -131,6 +131,13 @@ impl Store {
         }
     }
 
+    pub fn string_or_create(&mut self, key: String) -> Result<&mut Vec<u8>, WrongType> {
+        match self.get_or_insert(key, || Value::String(Vec::new())) {
+            Value::String(s) => Ok(s),
+            _ => Err(WrongType),
+        }
+    }
+
     pub fn get_list(&mut self, key: &str) -> Result<Option<&VecDeque<String>>, WrongType> {
         match self.get(key) {
             None => Ok(None),

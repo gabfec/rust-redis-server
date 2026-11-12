@@ -3,6 +3,7 @@
 //!   2. add `pub mod <name>;` to `<family>/mod.rs`,
 //!   3. add one line to the table in [`lookup`].
 
+mod bitmap;
 mod connection;
 mod keys;
 mod list;
@@ -107,6 +108,8 @@ fn lookup(name: &str) -> Option<Spec> {
         "get" => spec::<string::get::Get>(),
         "set" => spec::<string::set::Set>(),
         "incr" => spec::<string::incr::Incr>(),
+        // bitmaps
+        "setbit" => spec::<bitmap::setbit::Setbit>(),
         // lists
         "rpush" => spec::<list::rpush::Rpush>(),
         "lpush" => spec::<list::lpush::Lpush>(),
