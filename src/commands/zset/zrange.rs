@@ -1,11 +1,12 @@
 use crate::commands::{Args, CmdError, Command, Ctx};
 use crate::resp::RespValue;
 
-/// ZRANGE key start stop   (0-based positions, `stop` included)
+/// ZRANGE key start stop   (0-based positions, `stop` included; negative
+/// positions count from the end: -1 is the last member)
 pub struct Zrange {
     key: String,
-    start: usize,
-    stop: usize,
+    start: i64,
+    stop: i64,
 }
 
 impl Command for Zrange {
@@ -22,11 +23,16 @@ impl Command for Zrange {
         let Some(set) = store.get_zset(&self.key)? else {
             return Ok(RespValue::Array(vec![]));
         };
-        let stop = self.stop.min(set.len().saturating_sub(1));
-        if self.start >= set.len() || self.start > stop {
+        let len = set.len() as i64;
+        let from_end = |i: i64| if i < 0 { len + i } else { i };
+        // Like Redis: a start too far back means the first member, but a
+        // stop too far back stays before it (so the range is empty).
+        let start = from_end(self.start).max(0);
+        let stop = from_end(self.stop).min(len - 1);
+        if start > stop {
             return Ok(RespValue::Array(vec![]));
         }
-        Ok(RespValue::bulk_array(set.range(self.start, stop)))
+        Ok(RespValue::bulk_array(set.range(start as usize, stop as usize)))
     }
 }
 
@@ -49,5 +55,20 @@ mod tests {
         assert_eq!(zrange(&mut c, "5", "10"), RespValue::Array(vec![]));
         assert_eq!(zrange(&mut c, "3", "1"), RespValue::Array(vec![]));
         assert_eq!(c.cmd(&["ZRANGE", "missing", "0", "1"]), RespValue::Array(vec![]));
+    }
+
+    #[test]
+    fn negative_indexes() {
+        let mut c = Client::default();
+        for (score, member) in [("20.0", "foo"), ("30.1", "bar"), ("40.2", "baz"), ("25.0", "paz"), ("25.0", "caz")] {
+            c.cmd(&["ZADD", "zset_key", score, member]);
+        }
+        // Order: foo caz paz bar baz
+        assert_eq!(zrange(&mut c, "2", "-1"), RespValue::bulk_array(["paz", "bar", "baz"]));
+        assert_eq!(zrange(&mut c, "-2", "-1"), RespValue::bulk_array(["bar", "baz"]));
+        assert_eq!(zrange(&mut c, "0", "-3"), RespValue::bulk_array(["foo", "caz", "paz"]));
+        assert_eq!(zrange(&mut c, "-100", "1"), RespValue::bulk_array(["foo", "caz"]));
+        assert_eq!(zrange(&mut c, "-1", "-2"), RespValue::Array(vec![]));
+        assert_eq!(zrange(&mut c, "0", "-100"), RespValue::Array(vec![]), "as in Redis");
     }
 }
