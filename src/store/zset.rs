@@ -20,6 +20,12 @@ impl SortedSet {
         self.order.insert((Score(score), member));
         old.is_none()
     }
+
+    /// 0-based position of the member in the order.
+    pub fn rank(&self, member: &str) -> Option<usize> {
+        let score = *self.scores.get(member)?;
+        Some(self.order.range(..(Score(score), member.to_string())).count())
+    }
 }
 
 /// A score that can be ordered. Never NaN (commands reject it).
@@ -53,5 +59,17 @@ mod tests {
         let order: Vec<_> = set.order.iter().map(|(_, m)| m.as_str()).collect();
         assert_eq!(order, ["a", "b"]);
         assert_eq!(set.scores.len(), 2);
+    }
+
+    #[test]
+    fn rank_orders_equal_scores_by_member() {
+        let mut set = SortedSet::default();
+        set.insert("member_with_score_1".into(), 1.0);
+        set.insert("member_with_score_2".into(), 2.0);
+        set.insert("another_member_with_score_2".into(), 2.0);
+        assert_eq!(set.rank("member_with_score_1"), Some(0));
+        assert_eq!(set.rank("another_member_with_score_2"), Some(1));
+        assert_eq!(set.rank("member_with_score_2"), Some(2));
+        assert_eq!(set.rank("missing"), None);
     }
 }

@@ -158,6 +158,14 @@ impl Store {
         }
     }
 
+    pub fn get_zset(&mut self, key: &str) -> Result<Option<&SortedSet>, WrongType> {
+        match self.get(key) {
+            None => Ok(None),
+            Some(Value::SortedSet(z)) => Ok(Some(z)),
+            Some(_) => Err(WrongType),
+        }
+    }
+
     pub fn zset_or_create(&mut self, key: String) -> Result<&mut SortedSet, WrongType> {
         match self.get_or_insert(key, || Value::SortedSet(SortedSet::default())) {
             Value::SortedSet(z) => Ok(z),

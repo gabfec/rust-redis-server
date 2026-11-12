@@ -1,4 +1,5 @@
 pub mod zadd;
+pub mod zrank;
 
 use crate::commands::CmdError;
 

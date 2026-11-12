@@ -131,6 +131,7 @@ fn lookup(name: &str) -> Option<Spec> {
         "config" => spec::<server::config::Config>(),
         // sorted sets
         "zadd" => spec::<zset::zadd::Zadd>(),
+        "zrank" => spec::<zset::zrank::Zrank>(),
         // transactions
         "multi" => spec::<transaction::multi::Multi>(),
         "exec" => spec::<transaction::exec::Exec>(),
