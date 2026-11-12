@@ -1,3 +1,4 @@
+pub mod getbit;
 pub mod setbit;
 
 use crate::commands::CmdError;

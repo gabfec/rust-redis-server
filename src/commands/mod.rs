@@ -110,6 +110,7 @@ fn lookup(name: &str) -> Option<Spec> {
         "incr" => spec::<string::incr::Incr>(),
         // bitmaps
         "setbit" => spec::<bitmap::setbit::Setbit>(),
+        "getbit" => spec::<bitmap::getbit::Getbit>(),
         // lists
         "rpush" => spec::<list::rpush::Rpush>(),
         "lpush" => spec::<list::lpush::Lpush>(),
