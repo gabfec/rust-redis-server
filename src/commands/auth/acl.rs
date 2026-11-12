@@ -30,7 +30,12 @@ impl Command for Acl {
         match self {
             Acl::Whoami => Ok(RespValue::bulk("default")),
             Acl::Getuser(name) => Ok(match ctx.server.users.get(&name) {
-                Some(user) => RespValue::Array(vec![RespValue::bulk("flags"), RespValue::bulk_array(user.flags())]),
+                Some(user) => RespValue::Array(vec![
+                    RespValue::bulk("flags"),
+                    RespValue::bulk_array(user.flags()),
+                    RespValue::bulk("passwords"),
+                    RespValue::bulk_array(user.passwords),
+                ]),
                 None => RespValue::NullBulk,
             }),
         }
@@ -54,7 +59,12 @@ mod tests {
         let mut c = Client::default();
         assert_eq!(
             c.cmd(&["ACL", "GETUSER", "default"]),
-            RespValue::Array(vec![RespValue::bulk("flags"), RespValue::bulk_array(["nopass"])])
+            RespValue::Array(vec![
+                RespValue::bulk("flags"),
+                RespValue::bulk_array(["nopass"]),
+                RespValue::bulk("passwords"),
+                RespValue::Array(vec![]),
+            ])
         );
         assert_eq!(c.cmd(&["ACL", "GETUSER", "nobody"]), RespValue::NullBulk);
     }

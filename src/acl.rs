@@ -7,6 +7,8 @@ use std::sync::Mutex;
 pub struct User {
     /// Any password (or none) authenticates as this user.
     pub nopass: bool,
+    /// SHA-256 hashes of the passwords, in lowercase hex.
+    pub passwords: Vec<String>,
 }
 
 impl User {
@@ -28,7 +30,7 @@ impl Default for Users {
     fn default() -> Self {
         // Like in Redis, the default user starts without a password, so
         // new connections are authenticated as it.
-        let users = HashMap::from([("default".to_string(), User { nopass: true })]);
+        let users = HashMap::from([("default".to_string(), User { nopass: true, passwords: Vec::new() })]);
         Users { users: Mutex::new(users) }
     }
 }
