@@ -28,6 +28,17 @@ impl Point {
         // Fits in 52 bits, so the f64 is exact.
         (spread(latitude) | (spread(longitude) << 1)) as f64
     }
+
+    /// The location a score stands for: the centre of its geohash cell.
+    pub fn from_score(score: f64) -> Point {
+        let hash = score as u64;
+        let (latitude, longitude) = (compact(hash) as f64, compact(hash >> 1) as f64);
+        let centre = |cell: f64, min: f64, range: f64| min + range * (cell + 0.5) / CELLS;
+        Point {
+            longitude: centre(longitude, MIN_LONGITUDE, LONGITUDE_RANGE),
+            latitude: centre(latitude, MIN_LATITUDE, LATITUDE_RANGE),
+        }
+    }
 }
 
 /// Moves bit i of `v` (32 bits) to bit 2i.
@@ -38,6 +49,16 @@ fn spread(v: u64) -> u64 {
     v = (v | (v << 4)) & 0x0F0F_0F0F_0F0F_0F0F;
     v = (v | (v << 2)) & 0x3333_3333_3333_3333;
     (v | (v << 1)) & 0x5555_5555_5555_5555
+}
+
+/// The reverse of [`spread`]: moves bit 2i of `v` to bit i.
+fn compact(v: u64) -> u64 {
+    let mut v = v & 0x5555_5555_5555_5555;
+    v = (v | (v >> 1)) & 0x3333_3333_3333_3333;
+    v = (v | (v >> 2)) & 0x0F0F_0F0F_0F0F_0F0F;
+    v = (v | (v >> 4)) & 0x00FF_00FF_00FF_00FF;
+    v = (v | (v >> 8)) & 0x0000_FFFF_0000_FFFF;
+    (v | (v >> 16)) & 0x0000_0000_FFFF_FFFF
 }
 
 #[cfg(test)]
@@ -66,5 +87,19 @@ mod tests {
         for (name, longitude, latitude, score) in CITIES {
             assert_eq!(Point { longitude, latitude }.score(), score as f64, "{name}");
         }
+    }
+
+    #[test]
+    fn decodes_scores_to_within_a_cell() {
+        for (name, longitude, latitude, score) in CITIES {
+            let point = Point::from_score(score as f64);
+            assert!((point.longitude - longitude).abs() < 1e-5, "{name}: {point:?}");
+            assert!((point.latitude - latitude).abs() < 1e-5, "{name}: {point:?}");
+        }
+        // The decoded location is the centre of the cell, from the
+        // reference implementation.
+        let paris = Point::from_score(3663832752681684.0);
+        assert!((paris.longitude - 2.348802387714386).abs() < 1e-12);
+        assert!((paris.latitude - 48.85340071224621).abs() < 1e-12);
     }
 }

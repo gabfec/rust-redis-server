@@ -117,6 +117,7 @@ fn lookup(name: &str) -> Option<Spec> {
         "bitop" => spec::<bitmap::bitop::Bitop>(),
         // geospatial
         "geoadd" => spec::<geo::geoadd::Geoadd>(),
+        "geopos" => spec::<geo::geopos::Geopos>(),
         // lists
         "rpush" => spec::<list::rpush::Rpush>(),
         "lpush" => spec::<list::lpush::Lpush>(),
