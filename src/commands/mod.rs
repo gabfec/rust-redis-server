@@ -3,6 +3,7 @@
 //!   2. add `pub mod <name>;` to `<family>/mod.rs`,
 //!   3. add one line to the table in [`lookup`].
 
+mod auth;
 mod bitmap;
 mod connection;
 mod geo;
@@ -110,6 +111,8 @@ fn lookup(name: &str) -> Option<Spec> {
         "set" => spec::<string::set::Set>(),
         "incr" => spec::<string::incr::Incr>(),
         "strlen" => spec::<string::strlen::Strlen>(),
+        // authentication
+        "acl" => spec::<auth::acl::Acl>(),
         // bitmaps
         "setbit" => spec::<bitmap::setbit::Setbit>(),
         "getbit" => spec::<bitmap::getbit::Getbit>(),
