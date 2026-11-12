@@ -37,6 +37,13 @@ pub fn dispatch(words: Vec<String>, ctx: &mut Ctx) -> RespValue {
         return RespValue::Error(format!("ERR unknown command '{name}'"));
     };
 
+    // A client with subscriptions may only run a few commands.
+    if !ctx.conn.subscriptions.is_empty() && !pubsub::allowed_in_subscribed_mode(&name) {
+        return RespValue::Error(format!(
+            "ERR Can't execute '{name}': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / PING / QUIT / RESET are allowed in this context"
+        ));
+    }
+
     // Between MULTI and EXEC, commands are queued instead of run.
     if let Some(tx) = &mut ctx.conn.transaction
         && !transaction::runs_immediately(&name)
