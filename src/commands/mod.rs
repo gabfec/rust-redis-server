@@ -12,6 +12,7 @@ mod server;
 mod stream;
 mod string;
 mod transaction;
+mod zset;
 
 pub use transaction::Transaction;
 
@@ -128,6 +129,8 @@ fn lookup(name: &str) -> Option<Spec> {
         // server
         "info" => spec::<server::info::Info>(),
         "config" => spec::<server::config::Config>(),
+        // sorted sets
+        "zadd" => spec::<zset::zadd::Zadd>(),
         // transactions
         "multi" => spec::<transaction::multi::Multi>(),
         "exec" => spec::<transaction::exec::Exec>(),

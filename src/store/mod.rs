@@ -1,14 +1,17 @@
 mod stream;
+mod zset;
 
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 pub use stream::{Stream, StreamEntry, StreamId};
+pub use zset::SortedSet;
 
 pub enum Value {
     String(String),
     List(VecDeque<String>),
     Stream(Stream),
+    SortedSet(SortedSet),
 }
 
 impl Value {
@@ -17,6 +20,7 @@ impl Value {
             Value::String(_) => "string",
             Value::List(_) => "list",
             Value::Stream(_) => "stream",
+            Value::SortedSet(_) => "zset",
         }
     }
 }
@@ -150,6 +154,13 @@ impl Store {
     pub fn stream_or_create(&mut self, key: String) -> Result<&mut Stream, WrongType> {
         match self.get_or_insert(key, || Value::Stream(Stream::default())) {
             Value::Stream(s) => Ok(s),
+            _ => Err(WrongType),
+        }
+    }
+
+    pub fn zset_or_create(&mut self, key: String) -> Result<&mut SortedSet, WrongType> {
+        match self.get_or_insert(key, || Value::SortedSet(SortedSet::default())) {
+            Value::SortedSet(z) => Ok(z),
             _ => Err(WrongType),
         }
     }
