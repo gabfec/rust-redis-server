@@ -1,12 +1,16 @@
+use crate::acl::Rule;
 use crate::commands::{Args, CmdError, Command, Ctx};
 use crate::resp::RespValue;
 
-/// ACL WHOAMI | GETUSER username
+/// ACL WHOAMI | GETUSER username | SETUSER username [rule ...]
 pub enum Acl {
     /// The user this connection is authenticated as.
     Whoami,
     /// A user's properties, as [name, value, ...]; nil if no such user.
     Getuser(String),
+    /// Creates or changes a user. Rules: `>password`, `<password`,
+    /// `nopass`, `resetpass`.
+    Setuser(String, Vec<Rule>),
 }
 
 impl Command for Acl {
@@ -15,6 +19,16 @@ impl Command for Acl {
         let acl = match subcommand.as_str() {
             "WHOAMI" => Acl::Whoami,
             "GETUSER" => Acl::Getuser(args.next_string()?),
+            "SETUSER" => {
+                let name = args.next_string()?;
+                let mut rules = Vec::new();
+                while let Some(rule) = args.next_opt() {
+                    rules.push(Rule::parse(&rule).ok_or_else(|| {
+                        CmdError::Other(format!("ERR Error in ACL SETUSER modifier '{rule}': Syntax error"))
+                    })?);
+                }
+                Acl::Setuser(name, rules)
+            }
             _ => {
                 return Err(CmdError::Other(format!(
                     "ERR unknown subcommand '{}'. Try ACL HELP.",
@@ -38,6 +52,10 @@ impl Command for Acl {
                 ]),
                 None => RespValue::NullBulk,
             }),
+            Acl::Setuser(name, rules) => {
+                ctx.server.users.set(&name, rules);
+                Ok(RespValue::ok())
+            }
         }
     }
 }
@@ -54,19 +72,52 @@ mod tests {
         assert_eq!(c.cmd(&["acl", "whoami"]), RespValue::bulk("default"));
     }
 
+    fn getuser(c: &mut Client, name: &str) -> RespValue {
+        c.cmd(&["ACL", "GETUSER", name])
+    }
+
+    fn user(flags: &[&str], passwords: &[&str]) -> RespValue {
+        RespValue::Array(vec![
+            RespValue::bulk("flags"),
+            RespValue::bulk_array(flags.iter().copied()),
+            RespValue::bulk("passwords"),
+            RespValue::bulk_array(passwords.iter().copied()),
+        ])
+    }
+
     #[test]
-    fn getuser() {
+    fn getuser_of_the_default_user() {
         let mut c = Client::default();
+        assert_eq!(getuser(&mut c, "default"), user(&["nopass"], &[]));
+        assert_eq!(getuser(&mut c, "nobody"), RespValue::NullBulk);
+    }
+
+    const MYPASSWORD: &str = "89e01536ac207279409d4de1e5253e01f4a1769e696db0d6062ca9b8f56767c8";
+
+    #[test]
+    fn setuser_adds_a_password() {
+        let mut c = Client::default();
+        assert_eq!(c.cmd(&["ACL", "SETUSER", "default", ">mypassword"]), RespValue::ok());
+        assert_eq!(getuser(&mut c, "default"), user(&[], &[MYPASSWORD]));
+        c.cmd(&["ACL", "SETUSER", "default", ">mypassword"]);
+        assert_eq!(getuser(&mut c, "default"), user(&[], &[MYPASSWORD]), "no duplicates");
+    }
+
+    #[test]
+    fn setuser_rules() {
+        let mut c = Client::default();
+        c.cmd(&["ACL", "SETUSER", "default", ">a", ">b", "<a"]);
+        assert_eq!(getuser(&mut c, "default"), user(&[], &[&crate::sha256::hex_digest(b"b")]));
+        c.cmd(&["ACL", "SETUSER", "default", "nopass"]);
+        assert_eq!(getuser(&mut c, "default"), user(&["nopass"], &[]));
+        c.cmd(&["ACL", "SETUSER", "default", "resetpass"]);
+        assert_eq!(getuser(&mut c, "default"), user(&[], &[]));
+        assert_eq!(c.cmd(&["ACL", "SETUSER", "alice", ">mypassword"]), RespValue::ok());
+        assert_eq!(getuser(&mut c, "alice"), user(&[], &[MYPASSWORD]), "a new user");
         assert_eq!(
-            c.cmd(&["ACL", "GETUSER", "default"]),
-            RespValue::Array(vec![
-                RespValue::bulk("flags"),
-                RespValue::bulk_array(["nopass"]),
-                RespValue::bulk("passwords"),
-                RespValue::Array(vec![]),
-            ])
+            c.cmd(&["ACL", "SETUSER", "alice", "~*"]),
+            err("ERR Error in ACL SETUSER modifier '~*': Syntax error")
         );
-        assert_eq!(c.cmd(&["ACL", "GETUSER", "nobody"]), RespValue::NullBulk);
     }
 
     #[test]

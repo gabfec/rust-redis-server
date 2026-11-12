@@ -9,6 +9,7 @@ mod rdb;
 mod replication;
 mod resp;
 mod server;
+mod sha256;
 mod store;
 
 use std::net::TcpListener;
