@@ -108,6 +108,7 @@ fn lookup(name: &str) -> Option<Spec> {
         "get" => spec::<string::get::Get>(),
         "set" => spec::<string::set::Set>(),
         "incr" => spec::<string::incr::Incr>(),
+        "strlen" => spec::<string::strlen::Strlen>(),
         // bitmaps
         "setbit" => spec::<bitmap::setbit::Setbit>(),
         "getbit" => spec::<bitmap::getbit::Getbit>(),
