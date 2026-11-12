@@ -24,28 +24,8 @@ fn main() {
         std::process::exit(1);
     });
     println!("listening on port {}", config.port);
-    if let Err(e) = aof::init(&config) {
-        eprintln!("error: cannot set up the append-only file: {e}");
-        std::process::exit(1);
-    }
     let server = Arc::new(ServerState::new(&config));
-    match aof::Aof::open(&config) {
-        Ok(Some(aof)) => {
-            let _ = server.aof.set(aof);
-        }
-        Ok(None) => {}
-        Err(e) => {
-            eprintln!("error: cannot open the append-only file: {e}");
-            std::process::exit(1);
-        }
-    }
-    let rdb_path = std::path::Path::new(&config.dir).join(&config.dbfilename);
-    match rdb::load_into(&mut server.store(), &rdb_path) {
-        Ok(0) => {}
-        Ok(n) => println!("loaded {n} keys from {}", rdb_path.display()),
-        // Start with an empty database rather than not at all.
-        Err(e) => eprintln!("error: cannot load {}: {e}", rdb_path.display()),
-    }
+    load_data(&server, &config);
     replication::replica::start(Arc::clone(&server), config.port);
 
     for stream in listener.incoming() {
@@ -61,5 +41,34 @@ fn main() {
             }
             Err(e) => eprintln!("error: {e}"),
         }
+    }
+}
+
+/// Loads the data at startup. With AOF enabled, the AOF is replayed and
+/// (like Redis) the RDB file is ignored; then the AOF is opened so new
+/// writes are appended. Otherwise the RDB file is loaded.
+fn load_data(server: &ServerState, config: &Config) {
+    let fail = |what: &str, e: std::io::Error| -> ! {
+        eprintln!("error: cannot {what} the append-only file: {e}");
+        std::process::exit(1);
+    };
+    if config.appendonly == "yes" {
+        aof::init(config).unwrap_or_else(|e| fail("set up", e));
+        match aof::replay(server, config) {
+            Ok(0) => {}
+            Ok(n) => println!("replayed {n} commands from the append-only file"),
+            Err(e) => fail("replay", e),
+        }
+        if let Some(aof) = aof::Aof::open(config).unwrap_or_else(|e| fail("open", e)) {
+            let _ = server.aof.set(aof);
+        }
+        return;
+    }
+    let rdb_path = std::path::Path::new(&config.dir).join(&config.dbfilename);
+    match rdb::load_into(&mut server.store(), &rdb_path) {
+        Ok(0) => {}
+        Ok(n) => println!("loaded {n} keys from {}", rdb_path.display()),
+        // Start with an empty database rather than not at all.
+        Err(e) => eprintln!("error: cannot load {}: {e}", rdb_path.display()),
     }
 }

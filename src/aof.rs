@@ -7,7 +7,8 @@
 //! ```
 //!
 //! Every write command is appended to the incremental (`type i`) file
-//! in RESP, exactly as the client sent it.
+//! in RESP, exactly as the client sent it. At startup the file is
+//! replayed to rebuild the data.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -16,8 +17,11 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 
+use crate::commands::{self, Ctx};
 use crate::config::Config;
-use crate::resp::RespValue;
+use crate::connection::{command_words, ConnState};
+use crate::resp::{self, RespValue};
+use crate::server::ServerState;
 
 /// `<dir>/<appenddirname>`
 fn aof_dir(config: &Config) -> PathBuf {
@@ -63,6 +67,32 @@ fn incr_file_from_manifest(config: &Config) -> io::Result<PathBuf> {
         }
     }
     Err(io::Error::other("the AOF manifest names no incremental (type i) file"))
+}
+
+/// Runs every command in the AOF file, as if a client had sent them.
+/// Must happen before the AOF is opened for writing, so the commands
+/// aren't logged again. Returns how many commands ran.
+pub fn replay(server: &ServerState, config: &Config) -> io::Result<usize> {
+    if config.appendonly != "yes" || !manifest_path(config).exists() {
+        return Ok(0);
+    }
+    let bytes = fs::read(incr_file_from_manifest(config)?)?;
+    let mut conn = ConnState::default();
+    let (mut pos, mut count) = (0, 0);
+    while pos < bytes.len() {
+        let parsed = resp::parse(&bytes[pos..]).map_err(|e| io::Error::other(e.to_string()))?;
+        let Some((value, used)) = parsed else {
+            eprintln!("warning: ignoring an incomplete command at the end of the AOF");
+            break;
+        };
+        pos += used;
+        let words = command_words(value)
+            .filter(|words| !words.is_empty())
+            .ok_or_else(|| io::Error::other("the AOF holds something that isn't a command"))?;
+        commands::dispatch(words, &mut Ctx::new(server, &mut conn));
+        count += 1;
+    }
+    Ok(count)
 }
 
 /// The file write commands are appended to.
@@ -236,5 +266,34 @@ mod tests {
              *3\r\n$3\r\nSET\r\n$1\r\ns\r\n$1\r\nx\r\n\
              *3\r\n$3\r\nSET\r\n$3\r\nbar\r\n$1\r\n2\r\n"
         );
+    }
+
+    /// AOF files as the tester creates them: a manifest naming
+    /// `random.aof.1.incr.aof`, holding `log`.
+    fn existing_aof(name: &str, log: &str) -> (PathBuf, Config) {
+        let dir = temp_dir(name);
+        fs::create_dir_all(dir.join("aofdir")).unwrap();
+        fs::write(dir.join("aofdir/log.aof.manifest"), "file random.aof.1.incr.aof seq 1 type i\n").unwrap();
+        fs::write(dir.join("aofdir/random.aof.1.incr.aof"), log).unwrap();
+        let config = aof_config(&dir);
+        (dir, config)
+    }
+
+    /// Starts a server like main() does: init, replay, then open the AOF.
+    fn restart(config: &Config) -> Client {
+        init(config).unwrap();
+        let c = Client { server: ServerState::new(config), ..Client::default() };
+        replay(&c.server, config).unwrap();
+        let _ = c.server.aof.set(Aof::open(config).unwrap().unwrap());
+        c
+    }
+
+    #[test]
+    fn replays_a_command() {
+        let log = "*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n";
+        let (dir, config) = existing_aof("aof-replay", log);
+        let mut c = restart(&config);
+        assert_eq!(c.cmd(&["GET", "foo"]), RespValue::bulk("bar"));
+        assert_eq!(fs::read_to_string(dir.join("aofdir/random.aof.1.incr.aof")).unwrap(), log, "not logged twice");
     }
 }
