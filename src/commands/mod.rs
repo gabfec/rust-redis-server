@@ -6,6 +6,7 @@
 mod connection;
 mod keys;
 mod list;
+mod pubsub;
 mod replication;
 mod server;
 mod stream;
@@ -109,6 +110,8 @@ fn lookup(name: &str) -> Option<Spec> {
         "xadd" => spec::<stream::xadd::Xadd>(),
         "xrange" => spec::<stream::xrange::Xrange>(),
         "xread" => spec::<stream::xread::Xread>(),
+        // pub/sub
+        "subscribe" => spec::<pubsub::subscribe::Subscribe>(),
         // replication
         "replconf" => spec::<replication::replconf::Replconf>(),
         "psync" => spec::<replication::psync::Psync>(),

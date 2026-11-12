@@ -18,6 +18,8 @@ pub struct ConnState {
     pub replica_id: Option<u64>,
     /// On a replica's link to its master: bytes of commands processed.
     pub master_offset: u64,
+    /// Pub/Sub channels this client is subscribed to, in order.
+    pub subscriptions: Vec<String>,
 }
 
 pub fn handle(mut stream: TcpStream, server: &ServerState) -> io::Result<()> {
