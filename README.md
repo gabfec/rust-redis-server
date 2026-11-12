@@ -1,4 +1,4 @@
-# Redis Server in Rust (Built from Scratch)
+# Rust Redis Server
 
 [![Tests](https://github.com/gabfec/rust-redis-server/actions/workflows/rust.yml/badge.svg)](https://github.com/gabfec/rust-redis-server/actions)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
