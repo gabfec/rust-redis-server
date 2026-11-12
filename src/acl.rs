@@ -95,6 +95,14 @@ impl Users {
         self.users.lock().unwrap().get(name).cloned()
     }
 
+    /// Whether this username and password authenticate.
+    pub fn check(&self, name: &str, password: &str) -> bool {
+        let users = self.users.lock().unwrap();
+        users.get(name).is_some_and(|user| {
+            user.nopass || user.passwords.contains(&sha256::hex_digest(password.as_bytes()))
+        })
+    }
+
     /// Applies the rules to the user, creating it if needed.
     pub fn set(&self, name: &str, rules: Vec<Rule>) {
         let mut users = self.users.lock().unwrap();

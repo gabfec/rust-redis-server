@@ -113,6 +113,7 @@ fn lookup(name: &str) -> Option<Spec> {
         "strlen" => spec::<string::strlen::Strlen>(),
         // authentication
         "acl" => spec::<auth::acl::Acl>(),
+        "auth" => spec::<auth::auth::Auth>(),
         // bitmaps
         "setbit" => spec::<bitmap::setbit::Setbit>(),
         "getbit" => spec::<bitmap::getbit::Getbit>(),
