@@ -44,6 +44,12 @@ pub struct Store {
 }
 
 impl Store {
+    /// All keys that haven't expired.
+    pub fn keys(&mut self) -> Vec<String> {
+        let keys: Vec<String> = self.data.keys().cloned().collect();
+        keys.into_iter().filter(|key| self.get(key).is_some()).collect()
+    }
+
     pub fn version(&mut self, key: &str) -> u64 {
         self.purge_if_expired(key);
         self.versions.get(key).copied().unwrap_or(0)

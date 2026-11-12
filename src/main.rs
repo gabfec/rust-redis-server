@@ -24,6 +24,13 @@ fn main() {
     });
     println!("listening on port {}", config.port);
     let server = Arc::new(ServerState::new(&config));
+    let rdb_path = std::path::Path::new(&config.dir).join(&config.dbfilename);
+    match rdb::load_into(&mut server.store(), &rdb_path) {
+        Ok(0) => {}
+        Ok(n) => println!("loaded {n} keys from {}", rdb_path.display()),
+        // Start with an empty database rather than not at all.
+        Err(e) => eprintln!("error: cannot load {}: {e}", rdb_path.display()),
+    }
     replication::replica::start(Arc::clone(&server), config.port);
 
     for stream in listener.incoming() {

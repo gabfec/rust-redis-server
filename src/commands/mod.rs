@@ -88,6 +88,7 @@ fn lookup(name: &str) -> Option<Spec> {
         "echo" => spec::<connection::echo::Echo>(),
         // keys
         "type" => spec::<keys::r#type::Type>(),
+        "keys" => spec::<keys::keys::Keys>(),
         // strings
         "get" => spec::<string::get::Get>(),
         "set" => spec::<string::set::Set>(),
