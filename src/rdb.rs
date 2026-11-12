@@ -5,6 +5,7 @@
 //! databases (FE index, FB sizes, key/value pairs), then FF + checksum.
 
 use std::path::Path;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::store::{Store, Value};
 
@@ -23,6 +24,8 @@ pub fn empty() -> Vec<u8> {
 pub struct Entry {
     pub key: String,
     pub value: String,
+    /// When the key expires, in Unix time milliseconds.
+    pub expires_at_ms: Option<u64>,
 }
 
 /// Loads the RDB file at `path` into `store`. A missing file means an
@@ -33,10 +36,16 @@ pub fn load_into(store: &mut Store, path: &Path) -> Result<usize, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
         Err(e) => return Err(format!("{}: {e}", path.display())),
     };
-    let entries = parse(&bytes)?;
-    let count = entries.len();
-    for entry in entries {
-        store.set(entry.key, Value::String(entry.value), None);
+    let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+    let mut count = 0;
+    for entry in parse(&bytes)? {
+        let ttl = match entry.expires_at_ms {
+            None => None,
+            Some(at) if at <= now_ms => continue, // already expired
+            Some(at) => Some(Duration::from_millis(at - now_ms)),
+        };
+        store.set(entry.key, Value::String(entry.value), ttl);
+        count += 1;
     }
     Ok(count)
 }
@@ -48,6 +57,7 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Entry>, String> {
     }
     r.take(4)?; // version
     let mut entries = Vec::new();
+    let mut expires_at_ms = None; // applies to the next key
     loop {
         match r.byte()? {
             0xFA => {
@@ -63,10 +73,18 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Entry>, String> {
                 r.length()?; // number of keys with an expiry
             }
             0xFF => return Ok(entries), // followed by a checksum
+            0xFC => {
+                let b = r.take(8)?;
+                expires_at_ms = Some(u64::from_le_bytes(b.try_into().unwrap()));
+            }
+            0xFD => {
+                let b = r.take(4)?;
+                expires_at_ms = Some(u32::from_le_bytes(b.try_into().unwrap()) as u64 * 1000);
+            }
             0x00 => {
                 let key = r.string()?;
                 let value = r.string()?;
-                entries.push(Entry { key, value });
+                entries.push(Entry { key, value, expires_at_ms: expires_at_ms.take() });
             }
             other => return Err(format!("unsupported RDB entry type 0x{other:02X}")),
         }
@@ -169,11 +187,21 @@ pub mod test_util {
     pub fn string_entry(key: &str, value: &str) -> Vec<u8> {
         [vec![0x00], string(key), string(value)].concat()
     }
+
+    /// A string entry expiring at `at_ms` (Unix ms), stored as FC + 8 bytes.
+    pub fn expiring_entry_ms(key: &str, value: &str, at_ms: u64) -> Vec<u8> {
+        [vec![0xFC], at_ms.to_le_bytes().to_vec(), string_entry(key, value)].concat()
+    }
+
+    /// A string entry expiring at `at_s` (Unix seconds), stored as FD + 4 bytes.
+    pub fn expiring_entry_s(key: &str, value: &str, at_s: u32) -> Vec<u8> {
+        [vec![0xFD], at_s.to_le_bytes().to_vec(), string_entry(key, value)].concat()
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::test_util::{file, string_entry, temp_dir};
+    use super::test_util::{expiring_entry_ms, expiring_entry_s, file, string_entry, temp_dir};
     use super::{load_into, parse, Entry};
     use crate::commands::test_util::Client;
     use crate::resp::RespValue;
@@ -202,7 +230,8 @@ mod tests {
     #[test]
     fn reads_a_key() {
         let rdb = file(&[string_entry("foo", "bar")]);
-        assert_eq!(parse(&rdb), Ok(vec![Entry { key: "foo".into(), value: "bar".into() }]));
+        let foo = Entry { key: "foo".into(), value: "bar".into(), expires_at_ms: None };
+        assert_eq!(parse(&rdb), Ok(vec![foo]));
     }
 
     #[test]
@@ -269,5 +298,30 @@ mod tests {
         for (key, value) in [("apple", "red"), ("banana", "yellow"), ("grape", "purple")] {
             assert_eq!(c.cmd(&["GET", key]), RespValue::bulk(value), "{key}");
         }
+    }
+
+    #[test]
+    fn values_with_expiry() {
+        let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+        let now_s = (now_ms / 1000) as u32;
+        let entries = [
+            string_entry("forever", "1"),
+            expiring_entry_ms("past_ms", "2", now_ms - 60_000),
+            expiring_entry_ms("future_ms", "3", now_ms + 3_600_000),
+            expiring_entry_s("past_s", "4", now_s - 60),
+            expiring_entry_s("future_s", "5", now_s + 3600),
+            expiring_entry_ms("soon", "6", now_ms + 150),
+        ];
+        assert_eq!(parse(&file(&entries)).unwrap()[1].expires_at_ms, Some(now_ms - 60_000));
+
+        let mut c = client_with_rdb("rdb-expiry", &entries);
+        assert_eq!(c.cmd(&["GET", "forever"]), RespValue::bulk("1"));
+        assert_eq!(c.cmd(&["GET", "past_ms"]), RespValue::NullBulk);
+        assert_eq!(c.cmd(&["GET", "future_ms"]), RespValue::bulk("3"));
+        assert_eq!(c.cmd(&["GET", "past_s"]), RespValue::NullBulk);
+        assert_eq!(c.cmd(&["GET", "future_s"]), RespValue::bulk("5"));
+        assert_eq!(c.cmd(&["GET", "soon"]), RespValue::bulk("6"));
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert_eq!(c.cmd(&["GET", "soon"]), RespValue::NullBulk, "expires on time");
     }
 }
