@@ -1,6 +1,5 @@
 # Redis Clone in Rust
 
-[![progress-banner](https://backend.codecrafters.io/progress/redis/e81b336c-b0ff-4803-ac30-9376ee348256)](https://app.codecrafters.io/users/codecrafters-bot?r=2qF)
 [![Tests](https://github.com/gabfec/rust-redis-server/actions/workflows/rust.yml/badge.svg)](https://github.com/gabfec/rust-redis-server/actions)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Made with Rust](https://img.shields.io/badge/Made%20with-Rust-red.svg)]()
