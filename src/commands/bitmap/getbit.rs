@@ -44,6 +44,15 @@ mod tests {
     }
 
     #[test]
+    fn reads_bits_of_a_set_string() {
+        let mut c = Client::default();
+        c.cmd(&["SET", "mykey", "A"]); // 01000001
+        assert_eq!(c.cmd(&["GETBIT", "mykey", "1"]), RespValue::Integer(1));
+        assert_eq!(c.cmd(&["GETBIT", "mykey", "7"]), RespValue::Integer(1));
+        assert_eq!(c.cmd(&["GETBIT", "mykey", "0"]), RespValue::Integer(0));
+    }
+
+    #[test]
     fn bad_arguments() {
         let mut c = Client::default();
         assert_eq!(c.cmd(&["GETBIT", "k", "x"]), err("ERR bit offset is not an integer or out of range"));
