@@ -58,6 +58,14 @@ mod tests {
     }
 
     #[test]
+    fn stores_locations_in_a_sorted_set() {
+        let mut c = Client::default();
+        c.cmd(&["GEOADD", "places", "2.2944692", "48.8584625", "Paris"]);
+        assert_eq!(c.cmd(&["TYPE", "places"]), RespValue::Simple("zset".into()));
+        assert_eq!(c.cmd(&["ZRANGE", "places", "0", "-1"]), RespValue::bulk_array(["Paris"]));
+    }
+
+    #[test]
     fn bad_arguments() {
         let mut c = Client::default();
         assert_eq!(
