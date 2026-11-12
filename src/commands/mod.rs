@@ -5,6 +5,7 @@
 
 mod bitmap;
 mod connection;
+mod geo;
 mod keys;
 mod list;
 mod pubsub;
@@ -114,6 +115,8 @@ fn lookup(name: &str) -> Option<Spec> {
         "getbit" => spec::<bitmap::getbit::Getbit>(),
         "bitcount" => spec::<bitmap::bitcount::Bitcount>(),
         "bitop" => spec::<bitmap::bitop::Bitop>(),
+        // geospatial
+        "geoadd" => spec::<geo::geoadd::Geoadd>(),
         // lists
         "rpush" => spec::<list::rpush::Rpush>(),
         "lpush" => spec::<list::lpush::Lpush>(),
