@@ -21,15 +21,16 @@ impl Command for Incr {
         // Update in place so the key keeps its TTL.
         let Some(value) = store.get_string_mut(&self.key)? else {
             // A missing key counts as 0.
-            store.set(self.key, Value::String("1".into()), None);
+            store.set(self.key, Value::String(b"1".to_vec()), None);
             return Ok(RespValue::Integer(1));
         };
-        let n = value
-            .parse::<i64>()
-            .map_err(|_| CmdError::NotInteger)?
+        let n = std::str::from_utf8(value)
+            .ok()
+            .and_then(|s| s.parse::<i64>().ok())
+            .ok_or(CmdError::NotInteger)?
             .checked_add(1)
             .ok_or_else(|| CmdError::Other("ERR increment or decrement would overflow".into()))?;
-        *value = n.to_string();
+        *value = n.to_string().into_bytes();
         Ok(RespValue::Integer(n))
     }
 }

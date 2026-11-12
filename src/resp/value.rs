@@ -22,6 +22,19 @@ impl RespValue {
         RespValue::Bulk(s.into())
     }
 
+    /// A bulk string of any bytes. Sent as-is when not valid UTF-8.
+    pub fn bulk_bytes(bytes: &[u8]) -> Self {
+        match std::str::from_utf8(bytes) {
+            Ok(s) => RespValue::Bulk(s.to_owned()),
+            Err(_) => {
+                let mut out = format!("${}\r\n", bytes.len()).into_bytes();
+                out.extend_from_slice(bytes);
+                out.extend_from_slice(b"\r\n");
+                RespValue::Raw(out)
+            }
+        }
+    }
+
     pub fn bulk_array<S: Into<String>>(items: impl IntoIterator<Item = S>) -> Self {
         RespValue::Array(items.into_iter().map(RespValue::bulk).collect())
     }
@@ -65,5 +78,13 @@ mod tests {
         RespValue::Array(vec![RespValue::bulk("a"), RespValue::Integer(3), RespValue::NullBulk])
             .encode(&mut out);
         assert_eq!(out, b"*3\r\n$1\r\na\r\n:3\r\n$-1\r\n");
+    }
+
+    #[test]
+    fn bulk_bytes_keeps_any_byte() {
+        assert_eq!(RespValue::bulk_bytes(b"@"), RespValue::bulk("@"));
+        let mut out = Vec::new();
+        RespValue::bulk_bytes(&[0x80, 0]).encode(&mut out);
+        assert_eq!(out, b"$2\r\n\x80\x00\r\n");
     }
 }

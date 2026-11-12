@@ -235,7 +235,7 @@ mod tests {
     fn wait_for_value(server: &ServerState, key: &str, value: &str) {
         let deadline = Instant::now() + Duration::from_secs(1);
         while Instant::now() < deadline {
-            if server.store().get_string(key).ok().flatten().map(String::as_str) == Some(value) {
+            if server.store().get_string(key).ok().flatten().map(Vec::as_slice) == Some(value.as_bytes()) {
                 return;
             }
             thread::sleep(Duration::from_millis(10));

@@ -44,7 +44,7 @@ pub fn load_into(store: &mut Store, path: &Path) -> Result<usize, String> {
             Some(at) if at <= now_ms => continue, // already expired
             Some(at) => Some(Duration::from_millis(at - now_ms)),
         };
-        store.set(entry.key, Value::String(entry.value), ttl);
+        store.set(entry.key, Value::String(entry.value.into_bytes()), ttl);
         count += 1;
     }
     Ok(count)
@@ -268,7 +268,7 @@ mod tests {
         std::fs::write(&path, file(&[string_entry("foo", "bar")])).unwrap();
         assert_eq!(load_into(&mut store, &path), Ok(1));
         assert_eq!(store.keys(), ["foo"]);
-        assert_eq!(store.get_string("foo").unwrap().map(String::as_str), Some("bar"));
+        assert_eq!(store.get_string("foo").unwrap().map(Vec::as_slice), Some(&b"bar"[..]));
     }
 
     #[test]

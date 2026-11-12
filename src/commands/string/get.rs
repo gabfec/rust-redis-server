@@ -16,7 +16,7 @@ impl Command for Get {
     fn execute(self, ctx: &mut Ctx) -> Result<RespValue, CmdError> {
         let mut store = ctx.store();
         Ok(match store.get_string(&self.key)? {
-            Some(s) => RespValue::bulk(s.clone()),
+            Some(s) => RespValue::bulk_bytes(s),
             None => RespValue::NullBulk,
         })
     }

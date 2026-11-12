@@ -8,7 +8,8 @@ pub use stream::{Stream, StreamEntry, StreamId};
 pub use zset::SortedSet;
 
 pub enum Value {
-    String(String),
+    /// Bytes, not necessarily UTF-8 (bitmap commands write any byte).
+    String(Vec<u8>),
     List(VecDeque<String>),
     Stream(Stream),
     SortedSet(SortedSet),
@@ -114,7 +115,7 @@ impl Store {
 
     // ---- typed accessors ----
 
-    pub fn get_string(&mut self, key: &str) -> Result<Option<&String>, WrongType> {
+    pub fn get_string(&mut self, key: &str) -> Result<Option<&Vec<u8>>, WrongType> {
         match self.get(key) {
             None => Ok(None),
             Some(Value::String(s)) => Ok(Some(s)),
@@ -122,7 +123,7 @@ impl Store {
         }
     }
 
-    pub fn get_string_mut(&mut self, key: &str) -> Result<Option<&mut String>, WrongType> {
+    pub fn get_string_mut(&mut self, key: &str) -> Result<Option<&mut Vec<u8>>, WrongType> {
         match self.get_mut(key) {
             None => Ok(None),
             Some(Value::String(s)) => Ok(Some(s)),
