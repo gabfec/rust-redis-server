@@ -10,6 +10,8 @@ pub const MAX_LATITUDE: f64 = 85.05112878;
 
 const LONGITUDE_RANGE: f64 = MAX_LONGITUDE - MIN_LONGITUDE;
 const LATITUDE_RANGE: f64 = MAX_LATITUDE - MIN_LATITUDE;
+/// The value Redis uses, in meters.
+const EARTH_RADIUS: f64 = 6372797.560856;
 /// Each coordinate is a 26-bit cell number.
 const CELLS: f64 = (1u64 << 26) as f64;
 
@@ -27,6 +29,15 @@ impl Point {
         let longitude = (CELLS * (self.longitude - MIN_LONGITUDE) / LONGITUDE_RANGE) as u64;
         // Fits in 52 bits, so the f64 is exact.
         (spread(latitude) | (spread(longitude) << 1)) as f64
+    }
+
+    /// Great-circle distance in meters (the haversine formula, as in
+    /// Redis).
+    pub fn distance(self, other: Point) -> f64 {
+        let (lat1, lat2) = (self.latitude.to_radians(), other.latitude.to_radians());
+        let u = ((lat2 - lat1) / 2.0).sin();
+        let v = ((other.longitude - self.longitude).to_radians() / 2.0).sin();
+        2.0 * EARTH_RADIUS * (u * u + lat1.cos() * lat2.cos() * v * v).sqrt().asin()
     }
 
     /// The location a score stands for: the centre of its geohash cell.

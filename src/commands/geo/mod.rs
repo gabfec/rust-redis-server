@@ -1,8 +1,20 @@
 pub mod geoadd;
+pub mod geodist;
 pub mod geopos;
 
 use crate::commands::CmdError;
 use crate::geo::{Point, MAX_LATITUDE, MAX_LONGITUDE, MIN_LATITUDE, MIN_LONGITUDE};
+
+/// Meters per distance unit (m, km, mi, ft), case-insensitive.
+fn parse_unit(unit: &str) -> Result<f64, CmdError> {
+    match unit.to_ascii_lowercase().as_str() {
+        "m" => Ok(1.0),
+        "km" => Ok(1000.0),
+        "mi" => Ok(1609.34),
+        "ft" => Ok(0.3048),
+        _ => Err(CmdError::Other("ERR unsupported unit provided. please use M, KM, FT, MI".into())),
+    }
+}
 
 /// Parses and validates a longitude, latitude pair.
 fn parse_point(longitude: &str, latitude: &str) -> Result<Point, CmdError> {
