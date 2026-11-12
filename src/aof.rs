@@ -214,4 +214,27 @@ mod tests {
              *3\r\n$5\r\nLPUSH\r\n$1\r\nl\r\n$1\r\nx\r\n"
         );
     }
+
+    #[test]
+    fn only_write_commands_are_logged() {
+        let dir = temp_dir("aof-filter");
+        let mut c = aof_client(&Config { appendfsync: "always".into(), ..aof_config(&dir) });
+        c.cmd(&["SET", "foo", "1"]);
+        c.cmd(&["GET", "foo"]);
+        c.cmd(&["PING"]);
+        c.cmd(&["ECHO", "hello"]);
+        c.cmd(&["CONFIG", "GET", "dir"]);
+        c.cmd(&["KEYS", "*"]);
+        c.cmd(&["INCR", "foo"]);
+        c.cmd(&["SET", "s", "x"]);
+        c.cmd(&["INCR", "s"]); // fails: not logged
+        c.cmd(&["SET", "bar", "2"]);
+        assert_eq!(
+            read_log(&dir),
+            "*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$1\r\n1\r\n\
+             *2\r\n$4\r\nINCR\r\n$3\r\nfoo\r\n\
+             *3\r\n$3\r\nSET\r\n$1\r\ns\r\n$1\r\nx\r\n\
+             *3\r\n$3\r\nSET\r\n$3\r\nbar\r\n$1\r\n2\r\n"
+        );
+    }
 }
