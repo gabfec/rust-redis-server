@@ -1,1 +1,48 @@
 pub mod geoadd;
+
+use crate::commands::CmdError;
+
+const MIN_LONGITUDE: f64 = -180.0;
+const MAX_LONGITUDE: f64 = 180.0;
+/// Latitudes stop short of the poles because of the Web Mercator
+/// projection Redis uses.
+const MIN_LATITUDE: f64 = -85.05112878;
+const MAX_LATITUDE: f64 = 85.05112878;
+
+/// A location on Earth, in degrees.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Point {
+    pub longitude: f64,
+    pub latitude: f64,
+}
+
+/// Parses and validates a longitude, latitude pair.
+fn parse_point(longitude: &str, latitude: &str) -> Result<Point, CmdError> {
+    let parse = |s: &str| {
+        s.parse::<f64>().map_err(|_| CmdError::Other("ERR value is not a valid float".into()))
+    };
+    let (longitude, latitude) = (parse(longitude)?, parse(latitude)?);
+    if !(MIN_LONGITUDE..=MAX_LONGITUDE).contains(&longitude)
+        || !(MIN_LATITUDE..=MAX_LATITUDE).contains(&latitude)
+    {
+        return Err(CmdError::Other(format!(
+            "ERR invalid longitude,latitude pair {longitude:.6},{latitude:.6}"
+        )));
+    }
+    Ok(Point { longitude, latitude })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn limits_are_inclusive() {
+        for (lon, lat) in [("-180", "-85.05112878"), ("180", "85.05112878"), ("0", "0")] {
+            assert!(parse_point(lon, lat).is_ok(), "{lon},{lat}");
+        }
+        for (lon, lat) in [("180.0001", "0"), ("-181", "0"), ("0", "85.06"), ("0", "-90"), ("nan", "0")] {
+            assert!(parse_point(lon, lat).is_err(), "{lon},{lat}");
+        }
+    }
+}

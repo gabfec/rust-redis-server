@@ -1,3 +1,4 @@
+use super::{parse_point, Point};
 use crate::commands::{Args, CmdError, Command, Ctx};
 use crate::resp::RespValue;
 
@@ -10,6 +11,8 @@ pub struct Geoadd {
 }
 
 struct Location {
+    #[allow(dead_code)] // used for the score in a later stage
+    point: Point,
     member: String,
 }
 
@@ -25,12 +28,7 @@ impl Command for Geoadd {
         }
         let locations = rest
             .chunks(3)
-            .map(|triple| {
-                let not_float = || CmdError::Other("ERR value is not a valid float".into());
-                let _longitude: f64 = triple[0].parse().map_err(|_| not_float())?;
-                let _latitude: f64 = triple[1].parse().map_err(|_| not_float())?;
-                Ok(Location { member: triple[2].clone() })
-            })
+            .map(|triple| Ok(Location { point: parse_point(&triple[0], &triple[1])?, member: triple[2].clone() }))
             .collect::<Result<_, CmdError>>()?;
         Ok(Geoadd { key, locations })
     }
@@ -67,6 +65,20 @@ mod tests {
             err("ERR wrong number of arguments for 'geoadd' command")
         );
         assert_eq!(c.cmd(&["GEOADD", "places", "x", "2", "m"]), err("ERR value is not a valid float"));
+        assert_eq!(
+            c.cmd(&["GEOADD", "places", "180", "90", "test1"]),
+            err("ERR invalid longitude,latitude pair 180.000000,90.000000")
+        );
+        assert_eq!(
+            c.cmd(&["GEOADD", "places", "181", "0.3", "test2"]),
+            err("ERR invalid longitude,latitude pair 181.000000,0.300000")
+        );
+        // One invalid location means none is added.
+        assert_eq!(
+            c.cmd(&["GEOADD", "places", "1", "2", "ok", "200", "100", "foo"]),
+            err("ERR invalid longitude,latitude pair 200.000000,100.000000")
+        );
+        assert_eq!(c.cmd(&["TYPE", "places"]), RespValue::Simple("none".into()));
         c.cmd(&["SET", "s", "x"]);
         assert_eq!(
             c.cmd(&["GEOADD", "s", "1", "2", "m"]),
