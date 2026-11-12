@@ -252,4 +252,13 @@ mod tests {
         assert_eq!(c.cmd(&["GET", "count"]), RespValue::bulk("12345"));
         assert_eq!(c.cmd(&["INCR", "count"]), RespValue::Integer(12346));
     }
+
+    #[test]
+    fn keys_from_a_file_with_several_keys() {
+        let entries: Vec<_> = ["foo", "bar", "baz"].iter().map(|k| string_entry(k, "v")).collect();
+        let mut c = client_with_rdb("rdb-keys", &entries);
+        let RespValue::Array(mut keys) = c.cmd(&["KEYS", "*"]) else { panic!() };
+        keys.sort_by_key(|k| format!("{k:?}"));
+        assert_eq!(RespValue::Array(keys), RespValue::bulk_array(["bar", "baz", "foo"]));
+    }
 }
