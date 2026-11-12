@@ -193,4 +193,25 @@ mod tests {
         );
         assert!(!dir.join("aofdir/log.aof.1.incr.aof").exists());
     }
+
+    fn read_log(dir: &Path) -> String {
+        fs::read_to_string(dir.join("aofdir/log.aof.1.incr.aof")).unwrap()
+    }
+
+    #[test]
+    fn appends_multiple_commands_in_order() {
+        let dir = temp_dir("aof-multiple");
+        let mut c = aof_client(&Config { appendfsync: "always".into(), ..aof_config(&dir) });
+        c.cmd(&["SET", "foo", "100"]);
+        c.cmd(&["SET", "bar", "200"]);
+        c.cmd(&["INCR", "foo"]);
+        c.cmd(&["LPUSH", "l", "x"]);
+        assert_eq!(
+            read_log(&dir),
+            "*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\n100\r\n\
+             *3\r\n$3\r\nSET\r\n$3\r\nbar\r\n$3\r\n200\r\n\
+             *2\r\n$4\r\nINCR\r\n$3\r\nfoo\r\n\
+             *3\r\n$5\r\nLPUSH\r\n$1\r\nl\r\n$1\r\nx\r\n"
+        );
+    }
 }
