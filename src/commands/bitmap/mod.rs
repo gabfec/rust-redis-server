@@ -1,4 +1,5 @@
 pub mod bitcount;
+pub mod bitop;
 pub mod getbit;
 pub mod setbit;
 

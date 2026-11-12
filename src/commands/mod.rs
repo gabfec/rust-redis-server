@@ -113,6 +113,7 @@ fn lookup(name: &str) -> Option<Spec> {
         "setbit" => spec::<bitmap::setbit::Setbit>(),
         "getbit" => spec::<bitmap::getbit::Getbit>(),
         "bitcount" => spec::<bitmap::bitcount::Bitcount>(),
+        "bitop" => spec::<bitmap::bitop::Bitop>(),
         // lists
         "rpush" => spec::<list::rpush::Rpush>(),
         "lpush" => spec::<list::lpush::Lpush>(),
