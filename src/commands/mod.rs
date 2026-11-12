@@ -119,6 +119,7 @@ fn lookup(name: &str) -> Option<Spec> {
         "xread" => spec::<stream::xread::Xread>(),
         // pub/sub
         "subscribe" => spec::<pubsub::subscribe::Subscribe>(),
+        "publish" => spec::<pubsub::publish::Publish>(),
         // replication
         "replconf" => spec::<replication::replconf::Replconf>(),
         "psync" => spec::<replication::psync::Psync>(),

@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use crate::aof::Aof;
 use crate::config::Config;
+use crate::pubsub::PubSub;
 use crate::replication::Replication;
 use crate::store::Store;
 
@@ -16,6 +17,7 @@ pub struct ServerState {
     pub config: Config,
     /// The append-only file, once opened (after replaying it at startup).
     pub aof: OnceLock<Aof>,
+    pub pubsub: PubSub,
 }
 
 impl ServerState {

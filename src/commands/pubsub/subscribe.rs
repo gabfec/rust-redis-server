@@ -12,6 +12,10 @@ impl Command for Subscribe {
     }
 
     fn execute(self, ctx: &mut Ctx) -> Result<RespValue, CmdError> {
+        let client = ctx.conn.id();
+        for channel in &self.channels {
+            ctx.server.pubsub.subscribe(client, channel);
+        }
         let subscriptions = &mut ctx.conn.subscriptions;
         // One reply per channel: ["subscribe", channel, how many channels
         // this client is subscribed to]. A channel is only counted once.

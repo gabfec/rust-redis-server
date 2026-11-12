@@ -1,3 +1,4 @@
+pub mod publish;
 pub mod subscribe;
 
 /// Commands a client can still run once it has subscribed to a channel.

@@ -1,5 +1,6 @@
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::commands::{self, Ctx, Transaction};
 use crate::resp::{self, RespValue};
@@ -20,19 +21,38 @@ pub struct ConnState {
     pub master_offset: u64,
     /// Pub/Sub channels this client is subscribed to, in order.
     pub subscriptions: Vec<String>,
+    /// Unique id, given on first use (see `id()`).
+    client_id: Option<u64>,
+}
+
+impl ConnState {
+    /// This connection's unique id.
+    pub fn id(&mut self) -> u64 {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+        *self.client_id.get_or_insert_with(|| NEXT_ID.fetch_add(1, Ordering::Relaxed))
+    }
 }
 
 pub fn handle(mut stream: TcpStream, server: &ServerState) -> io::Result<()> {
     let mut conn = ConnState::default();
+    let result = serve(&mut stream, server, &mut conn);
+    // However the connection ended, forget about it.
+    if let Some(id) = conn.replica_id {
+        server.replication.remove_replica(id);
+    }
+    if conn.client_id.is_some() {
+        server.pubsub.unsubscribe_all(conn.id());
+    }
+    result
+}
+
+fn serve(stream: &mut TcpStream, server: &ServerState, conn: &mut ConnState) -> io::Result<()> {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 4096];
 
     loop {
         let n = stream.read(&mut chunk)?;
         if n == 0 {
-            if let Some(id) = conn.replica_id {
-                server.replication.remove_replica(id);
-            }
             return Ok(());
         }
         buf.extend_from_slice(&chunk[..n]);
@@ -43,7 +63,7 @@ pub fn handle(mut stream: TcpStream, server: &ServerState) -> io::Result<()> {
             match resp::parse(&buf) {
                 Ok(Some((value, used))) => {
                     buf.drain(..used);
-                    if let Some(reply) = execute(value, server, &mut conn) {
+                    if let Some(reply) = execute(value, server, conn) {
                         reply.encode(&mut out);
                     }
                 }

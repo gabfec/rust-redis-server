@@ -2,6 +2,7 @@ mod aof;
 mod commands;
 mod config;
 mod connection;
+mod pubsub;
 mod rdb;
 mod replication;
 mod resp;
