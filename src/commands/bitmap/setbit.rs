@@ -60,6 +60,16 @@ mod tests {
     }
 
     #[test]
+    fn writes_bytes_that_get_returns() {
+        let mut c = Client::default();
+        c.cmd(&["SETBIT", "mykey", "1", "1"]); // 01000000
+        assert_eq!(c.cmd(&["GET", "mykey"]), RespValue::bulk("@"));
+        c.cmd(&["SET", "s", "A"]); // 01000001
+        c.cmd(&["SETBIT", "s", "6", "1"]); // 01000011
+        assert_eq!(c.cmd(&["GET", "s"]), RespValue::bulk("C"));
+    }
+
+    #[test]
     fn bad_arguments() {
         let mut c = Client::default();
         let bad_offset = err("ERR bit offset is not an integer or out of range");
