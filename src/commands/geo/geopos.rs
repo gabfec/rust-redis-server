@@ -38,6 +38,7 @@ impl Command for Geopos {
 #[cfg(test)]
 mod tests {
     use crate::commands::test_util::{err, Client};
+    use crate::geo::Point;
     use crate::resp::RespValue;
 
     /// The [longitude, latitude] of a GEOPOS entry.
@@ -64,6 +65,23 @@ mod tests {
         assert_eq!(entries[1], RespValue::NullArray);
         let [lon, lat] = coordinates(&entries[2]);
         assert!((lon - 11.5030378).abs() < 1e-6 && (lat - 48.164271).abs() < 1e-6, "{lon},{lat}");
+    }
+
+    #[test]
+    fn decodes_scores_added_with_zadd() {
+        let mut c = Client::default();
+        c.cmd(&["ZADD", "location_key", "3663832614298053", "Foo"]);
+        assert_eq!(
+            c.cmd(&["GEOPOS", "location_key", "Foo"]),
+            RespValue::Array(vec![RespValue::bulk_array(["2.294471561908722", "48.85846255040141"])])
+        );
+        // Each decoded position is in the cell the score stands for.
+        for score in ["3876464048901851", "3468915414364476", "3781709020344510"] {
+            c.cmd(&["ZADD", "location_key", score, "member"]);
+            let RespValue::Array(entries) = c.cmd(&["GEOPOS", "location_key", "member"]) else { panic!() };
+            let [longitude, latitude] = coordinates(&entries[0]);
+            assert_eq!(Point { longitude, latitude }.score().to_string(), score);
+        }
     }
 
     #[test]
