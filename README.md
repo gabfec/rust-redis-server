@@ -1,34 +1,102 @@
+# Redis Clone in Rust
+
 [![progress-banner](https://backend.codecrafters.io/progress/redis/e81b336c-b0ff-4803-ac30-9376ee348256)](https://app.codecrafters.io/users/codecrafters-bot?r=2qF)
+[![Made with Rust](https://img.shields.io/badge/Made%20with-Rust-red.svg)]()
+[![Rust](https://img.shields.io/badge/rust-1.92+-orange.svg)](https://www.rust-lang.org)
 
-This is a starting point for Rust solutions to the
-["Build Your Own Redis" Challenge](https://codecrafters.io/challenges/redis).
+A Redis-compatible server written in Rust, built from scratch on the
+standard library alone: no async runtime, no external crates.
 
-In this challenge, you'll build a toy Redis clone that's capable of handling
-basic commands like `PING`, `SET` and `GET`. Along the way we'll learn about
-event loops, the Redis protocol and more.
+It implements:
 
-**Note**: If you're viewing this repo on GitHub, head over to
-[codecrafters.io](https://codecrafters.io) to try the challenge.
+- RESP protocol parser and encoder
+- Thread-per-connection TCP server
+- Strings, lists, streams, sorted sets and bitmaps
+- Key expiry
+- Transactions (`MULTI`/`EXEC`) and optimistic locking (`WATCH`)
+- Pub/Sub
+- Leader/follower replication
+- RDB loading and AOF persistence
+- Geospatial indexing (geohash scores, haversine distance)
+- ACL users and password authentication (hand-written SHA-256)
 
-# Passing the first stage
+Works with the standard `redis-cli`.
 
-The entry point for your Redis implementation is in `src/main.rs`. Study and
-uncomment the relevant code, and push your changes to pass the first stage:
+---
 
-```sh
-git commit -am "pass 1st stage" # any msg
-git push origin master
+## Features
+
+### Commands
+
+| Family | Commands |
+|--------|----------|
+Connection | `PING`, `ECHO`
+Strings | `SET` (`EX`, `PX`), `GET`, `INCR`, `STRLEN`
+Keys | `KEYS`, `TYPE`
+Lists | `RPUSH`, `LPUSH`, `LRANGE`, `LLEN`, `LPOP`, `BLPOP`
+Streams | `XADD`, `XRANGE`, `XREAD` (`BLOCK`)
+Transactions | `MULTI`, `EXEC`, `DISCARD`, `WATCH`, `UNWATCH`
+Pub/Sub | `SUBSCRIBE`, `UNSUBSCRIBE`, `PUBLISH`
+Sorted sets | `ZADD`, `ZRANK`, `ZRANGE`, `ZCARD`, `ZSCORE`, `ZREM`
+Bitmaps | `SETBIT`, `GETBIT`, `BITCOUNT`, `BITOP` (`AND`, `OR`)
+Geospatial | `GEOADD`, `GEOPOS`, `GEODIST`, `GEOSEARCH` (`FROMLONLAT`, `BYRADIUS`)
+Authentication | `AUTH`, `ACL WHOAMI`, `ACL GETUSER`, `ACL SETUSER`
+Replication | `REPLCONF`, `PSYNC`, `WAIT`
+Server | `INFO replication`, `CONFIG GET`
+
+---
+
+### Server options
+
+| Option | Description |
+|------|-------------|
+`--port <port>` | port to listen on (default `6379`)
+`--replicaof "<host> <port>"` | run as a replica of that master
+`--dir <dir>` | directory of the RDB file
+`--dbfilename <name>` | RDB file to load at startup
+`--appendonly yes\|no` | enable AOF persistence (default `no`)
+`--appenddirname <dir>` | AOF directory (default `appendonlydir`)
+`--appendfilename <name>` | AOF base name (default `appendonly.aof`)
+`--appendfsync always\|everysec\|no` | when to fsync the AOF (default `everysec`)
+
+---
+
+## Example usage
+
+Start the server:
+
+```bash
+./your_program.sh --port 6379
 ```
 
-That's all!
+Talk to it with `redis-cli`:
 
-# Stage 2 & beyond
+```bash
+redis-cli SET greeting hello
+redis-cli GET greeting
+redis-cli GEOADD places 13.361389 38.115556 Palermo
+```
 
-Note: This section is for stages 2 and beyond.
+Start a replica:
 
-1. Ensure you have `cargo (1.92)` installed locally
-1. Run `./your_program.sh` to run your Redis server, which is implemented in
-   `src/main.rs`. This command compiles your Rust project, so it might be slow
-   the first time you run it. Subsequent runs will be fast.
-1. Commit your changes and run `git push origin master` to submit your solution
-   to CodeCrafters. Test output will be streamed to your terminal.
+```bash
+./your_program.sh --port 6380 --replicaof "localhost 6379"
+```
+
+Run the tests:
+
+```bash
+cargo test
+```
+
+## Educational Purpose
+
+This project was built as part of the CodeCrafters
+["Build Your Own Redis"](https://codecrafters.io/challenges/redis)
+challenge, which focuses on implementing real-world systems from scratch.
+
+The goal was to understand how Redis works internally, including the wire
+protocol, blocking commands, replication handshakes, persistence formats
+and geohash encoding, without relying on external libraries.
+
+https://codecrafters.io
