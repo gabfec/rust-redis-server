@@ -84,6 +84,19 @@ mod tests {
     }
 
     #[test]
+    fn and_pads_shorter_strings_with_zeros() {
+        let mut c = Client::default();
+        bits(&mut c, "key1", &[1, 10]); // 01000000 00100000
+        bits(&mut c, "key2", &[1]); // 01000000
+        assert_eq!(c.cmd(&["BITOP", "AND", "dest", "key1", "key2"]), RespValue::Integer(2));
+        assert_eq!(get_bits(&mut c, "dest", &[1, 10]), [RespValue::Integer(1), RespValue::Integer(0)]);
+        assert_eq!(c.cmd(&["STRLEN", "dest"]), RespValue::Integer(2));
+        // A missing key is all zeros, as long as the longest source.
+        assert_eq!(c.cmd(&["BITOP", "AND", "dest", "key1", "missing"]), RespValue::Integer(2));
+        assert_eq!(c.cmd(&["BITCOUNT", "dest"]), RespValue::Integer(0));
+    }
+
+    #[test]
     fn empty_result_deletes_the_destination() {
         let mut c = Client::default();
         c.cmd(&["SET", "dest", "x"]);
