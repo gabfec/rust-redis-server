@@ -2,7 +2,7 @@ use crate::commands::{Args, CmdError, Command, Ctx};
 use crate::resp::RespValue;
 use crate::store::Value;
 
-/// BITOP AND destkey key [key ...]
+/// BITOP AND|OR destkey key [key ...]
 /// Combines strings byte by byte and stores the result at `destkey`.
 /// Shorter strings (and missing keys) count as zero-padded to the longest
 /// one. Returns the length of the result.
@@ -14,12 +14,14 @@ pub struct Bitop {
 
 enum Op {
     And,
+    Or,
 }
 
 impl Op {
     fn apply(&self, a: u8, b: u8) -> u8 {
         match self {
             Op::And => a & b,
+            Op::Or => a | b,
         }
     }
 }
@@ -30,6 +32,7 @@ impl Command for Bitop {
     fn parse(mut args: Args) -> Result<Self, CmdError> {
         let op = match args.next_string()?.to_ascii_uppercase().as_str() {
             "AND" => Op::And,
+            "OR" => Op::Or,
             _ => return Err(CmdError::Syntax),
         };
         let dest = args.next_string()?;
@@ -94,6 +97,21 @@ mod tests {
         // A missing key is all zeros, as long as the longest source.
         assert_eq!(c.cmd(&["BITOP", "AND", "dest", "key1", "missing"]), RespValue::Integer(2));
         assert_eq!(c.cmd(&["BITCOUNT", "dest"]), RespValue::Integer(0));
+    }
+
+    #[test]
+    fn or() {
+        let mut c = Client::default();
+        bits(&mut c, "key1", &[0, 4]); // 10001000
+        bits(&mut c, "key2", &[0, 6]); // 10000010
+        assert_eq!(c.cmd(&["BITOP", "OR", "dest", "key1", "key2"]), RespValue::Integer(1));
+        let [one, zero] = [RespValue::Integer(1), RespValue::Integer(0)];
+        assert_eq!(get_bits(&mut c, "dest", &[0, 4, 6, 7]), [one.clone(), one.clone(), one.clone(), zero]);
+
+        bits(&mut c, "key3", &[1, 10]); // 01000000 00100000
+        bits(&mut c, "key4", &[1]); // 01000000
+        assert_eq!(c.cmd(&["bitop", "or", "dest2", "key3", "key4"]), RespValue::Integer(2));
+        assert_eq!(get_bits(&mut c, "dest2", &[1, 10]), [one.clone(), one]);
     }
 
     #[test]
