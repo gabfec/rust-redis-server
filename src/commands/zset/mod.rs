@@ -2,6 +2,7 @@ pub mod zadd;
 pub mod zcard;
 pub mod zrange;
 pub mod zrank;
+pub mod zrem;
 pub mod zscore;
 
 use crate::commands::CmdError;

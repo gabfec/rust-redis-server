@@ -84,6 +84,16 @@ impl Store {
         &mut entry.value
     }
 
+    /// Deletes the key. Returns true if it existed.
+    pub fn remove(&mut self, key: &str) -> bool {
+        self.purge_if_expired(key);
+        let existed = self.data.remove(key).is_some();
+        if existed {
+            self.touch(key);
+        }
+        existed
+    }
+
     pub fn set(&mut self, key: String, value: Value, ttl: Option<Duration>) {
         let expires_at = ttl.map(|ttl| Instant::now() + ttl);
         self.touch(&key);
@@ -160,6 +170,14 @@ impl Store {
 
     pub fn get_zset(&mut self, key: &str) -> Result<Option<&SortedSet>, WrongType> {
         match self.get(key) {
+            None => Ok(None),
+            Some(Value::SortedSet(z)) => Ok(Some(z)),
+            Some(_) => Err(WrongType),
+        }
+    }
+
+    pub fn get_zset_mut(&mut self, key: &str) -> Result<Option<&mut SortedSet>, WrongType> {
+        match self.get_mut(key) {
             None => Ok(None),
             Some(Value::SortedSet(z)) => Ok(Some(z)),
             Some(_) => Err(WrongType),

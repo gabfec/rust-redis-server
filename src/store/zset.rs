@@ -34,6 +34,14 @@ impl SortedSet {
         self.order.iter().skip(start).take(stop.saturating_sub(start) + 1).map(|(_, m)| m.as_str())
     }
 
+    /// Returns true if the member was there.
+    pub fn remove(&mut self, member: &str) -> bool {
+        match self.scores.remove(member) {
+            Some(score) => self.order.remove(&(Score(score), member.to_string())),
+            None => false,
+        }
+    }
+
     /// 0-based position of the member in the order.
     pub fn rank(&self, member: &str) -> Option<usize> {
         let score = *self.scores.get(member)?;
