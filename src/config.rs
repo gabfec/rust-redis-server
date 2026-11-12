@@ -1,5 +1,6 @@
 //! Command-line options: `--port <port>`, `--replicaof "<host> <port>"`,
-//! `--dir <dir>`, `--dbfilename <name>`.
+//! `--dir <dir>`, `--dbfilename <name>`, and the AOF options `--appendonly`,
+//! `--appenddirname`, `--appendfilename`, `--appendfsync`.
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
@@ -54,6 +55,10 @@ impl Config {
                 }
                 "--dir" => config.dir = value(&mut args, &flag)?,
                 "--dbfilename" => config.dbfilename = value(&mut args, &flag)?,
+                "--appendonly" => config.appendonly = value(&mut args, &flag)?,
+                "--appenddirname" => config.appenddirname = value(&mut args, &flag)?,
+                "--appendfilename" => config.appendfilename = value(&mut args, &flag)?,
+                "--appendfsync" => config.appendfsync = value(&mut args, &flag)?,
                 _ => return Err(format!("unknown option '{flag}'")),
             }
         }
@@ -142,5 +147,22 @@ mod tests {
         assert_eq!(get("appendfilename"), "appendonly.aof");
         assert_eq!(get("appendfsync"), "everysec");
         assert_eq!(get("dir"), std::env::current_dir().unwrap().display().to_string());
+    }
+
+    #[test]
+    fn aof_options_from_flags() {
+        let config = parse(&[
+            "--dir", "/tmp/data", "--appendonly", "yes", "--appenddirname", "aofdir",
+            "--appendfilename", "log.aof", "--appendfsync", "always",
+        ])
+        .unwrap();
+        let get = |name| config.get(name).unwrap();
+        assert_eq!(get("dir"), "/tmp/data");
+        assert_eq!(get("appendonly"), "yes");
+        assert_eq!(get("appenddirname"), "aofdir");
+        assert_eq!(get("appendfilename"), "log.aof");
+        assert_eq!(get("appendfsync"), "always");
+        // Flags left out keep their defaults.
+        assert_eq!(parse(&["--appendonly", "yes"]).unwrap().get("appendfsync").unwrap(), "everysec");
     }
 }
