@@ -261,4 +261,13 @@ mod tests {
         keys.sort_by_key(|k| format!("{k:?}"));
         assert_eq!(RespValue::Array(keys), RespValue::bulk_array(["bar", "baz", "foo"]));
     }
+
+    #[test]
+    fn get_multiple_string_values() {
+        let entries = [string_entry("apple", "red"), string_entry("banana", "yellow"), string_entry("grape", "purple")];
+        let mut c = client_with_rdb("rdb-values", &entries);
+        for (key, value) in [("apple", "red"), ("banana", "yellow"), ("grape", "purple")] {
+            assert_eq!(c.cmd(&["GET", key]), RespValue::bulk(value), "{key}");
+        }
+    }
 }
