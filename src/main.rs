@@ -29,6 +29,16 @@ fn main() {
         std::process::exit(1);
     }
     let server = Arc::new(ServerState::new(&config));
+    match aof::Aof::open(&config) {
+        Ok(Some(aof)) => {
+            let _ = server.aof.set(aof);
+        }
+        Ok(None) => {}
+        Err(e) => {
+            eprintln!("error: cannot open the append-only file: {e}");
+            std::process::exit(1);
+        }
+    }
     let rdb_path = std::path::Path::new(&config.dir).join(&config.dbfilename);
     match rdb::load_into(&mut server.store(), &rdb_path) {
         Ok(0) => {}

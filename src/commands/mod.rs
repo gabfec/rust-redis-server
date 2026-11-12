@@ -53,13 +53,18 @@ pub fn execute(spec: Spec, mut words: Vec<String>, ctx: &mut Ctx) -> RespValue {
         let name = words.remove(0).to_ascii_lowercase();
         return (spec.run)(Args::new(name, words), ctx);
     }
-    // Run it and forward it to the replicas under one lock, so replicas
-    // get the writes in exactly the order they happened here.
+    // Run it, forward it to the replicas and log it to the AOF under one
+    // lock, so they get the writes in exactly the order they happened.
     ctx.atomically(|ctx| {
         let name = words[0].to_ascii_lowercase();
         let reply = (spec.run)(Args::new(name, words[1..].to_vec()), ctx);
         if !matches!(reply, RespValue::Error(_)) {
             ctx.server.replication.propagate(&words);
+            if let Some(aof) = ctx.server.aof.get()
+                && let Err(e) = aof.append(&words)
+            {
+                eprintln!("error: cannot write to the append-only file: {e}");
+            }
         }
         reply
     })

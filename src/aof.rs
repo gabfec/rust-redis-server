@@ -5,12 +5,19 @@
 //! ```text
 //! file appendonly.aof.1.incr.aof seq 1 type i
 //! ```
+//!
+//! Every write command is appended to the incremental (`type i`) file
+//! in RESP, exactly as the client sent it.
 
-use std::fs::{self, OpenOptions};
-use std::io;
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::thread;
+use std::time::Duration;
 
 use crate::config::Config;
+use crate::resp::RespValue;
 
 /// `<dir>/<appenddirname>`
 fn aof_dir(config: &Config) -> PathBuf {
@@ -44,10 +51,72 @@ pub fn init(config: &Config) -> io::Result<()> {
     fs::write(manifest, format!("file {file} seq 1 type i\n"))
 }
 
+/// The incremental AOF file named in the manifest.
+fn incr_file_from_manifest(config: &Config) -> io::Result<PathBuf> {
+    let manifest = fs::read_to_string(manifest_path(config))?;
+    for line in manifest.lines() {
+        // "file <name> seq <n> type <t>": key/value pairs.
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        let field = |key| fields.chunks(2).find(|kv| kv[0] == key).and_then(|kv| kv.get(1).copied());
+        if let (Some(name), Some("i")) = (field("file"), field("type")) {
+            return Ok(aof_dir(config).join(name));
+        }
+    }
+    Err(io::Error::other("the AOF manifest names no incremental (type i) file"))
+}
+
+/// The file write commands are appended to.
+pub struct Aof {
+    file: Mutex<File>,
+    /// appendfsync always: flush to disk before replying.
+    fsync_always: bool,
+}
+
+impl Aof {
+    /// Opens the file named in the manifest (see `init`), if AOF is enabled.
+    pub fn open(config: &Config) -> io::Result<Option<Aof>> {
+        if config.appendonly != "yes" {
+            return Ok(None);
+        }
+        let file = OpenOptions::new().append(true).open(incr_file_from_manifest(config)?)?;
+        if config.appendfsync == "everysec" {
+            // Flush to disk once a second, in the background.
+            let syncer = file.try_clone()?;
+            thread::spawn(move || loop {
+                thread::sleep(Duration::from_secs(1));
+                let _ = syncer.sync_data();
+            });
+        }
+        Ok(Some(Aof { file: Mutex::new(file), fsync_always: config.appendfsync == "always" }))
+    }
+
+    /// Appends a command, as the client sent it.
+    pub fn append(&self, words: &[String]) -> io::Result<()> {
+        let mut out = Vec::new();
+        RespValue::bulk_array(words.iter().cloned()).encode(&mut out);
+        let mut file = self.file.lock().unwrap();
+        file.write_all(&out)?;
+        if self.fsync_always {
+            file.sync_data()?;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::test_util::Client;
     use crate::rdb::test_util::temp_dir;
+    use crate::server::ServerState;
+
+    /// A client of a server with AOF enabled in `dir`.
+    fn aof_client(config: &Config) -> Client {
+        init(config).unwrap();
+        let c = Client { server: ServerState::new(config), ..Client::default() };
+        let _ = c.server.aof.set(Aof::open(config).unwrap().unwrap());
+        c
+    }
 
     fn aof_config(dir: &Path) -> Config {
         Config {
@@ -106,5 +175,22 @@ mod tests {
         let dir = temp_dir("aof-off");
         init(&Config { appendonly: "no".into(), ..aof_config(&dir) }).unwrap();
         assert!(!dir.join("aofdir").exists());
+    }
+
+    #[test]
+    fn writes_a_command_to_the_file_named_in_the_manifest() {
+        let dir = temp_dir("aof-write");
+        fs::create_dir_all(dir.join("aofdir")).unwrap();
+        fs::write(dir.join("aofdir/log.aof.manifest"), "file random.aof.1.incr.aof seq 1 type i\n").unwrap();
+        fs::write(dir.join("aofdir/random.aof.1.incr.aof"), "").unwrap();
+        let config = Config { appendfsync: "always".into(), ..aof_config(&dir) };
+
+        let mut c = aof_client(&config);
+        c.cmd(&["SET", "foo", "100"]);
+        assert_eq!(
+            fs::read_to_string(dir.join("aofdir/random.aof.1.incr.aof")).unwrap(),
+            "*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\n100\r\n"
+        );
+        assert!(!dir.join("aofdir/log.aof.1.incr.aof").exists());
     }
 }
